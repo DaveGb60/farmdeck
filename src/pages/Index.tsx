@@ -4,6 +4,8 @@ import { ProjectCard } from '@/components/ProjectCard';
 import { CreateProjectDialog } from '@/components/CreateProjectDialog';
 import { RecordTable } from '@/components/RecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
+import { QRShareDialog } from '@/components/QRShareDialog';
+import { QRScannerDialog } from '@/components/QRScannerDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -30,7 +32,7 @@ import {
   lockRecord,
   getMonthlyAggregation,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -42,6 +44,8 @@ const Index = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [shareProject, setShareProject] = useState<{ project: FarmProject; records: FarmRecord[] } | null>(null);
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const { toast } = useToast();
 
   // Load projects
@@ -121,6 +125,14 @@ const Index = () => {
     }
   };
 
+  const handleShareProject = async (id: string) => {
+    const project = await getProject(id);
+    if (project) {
+      const projectRecords = await getRecordsByProject(id);
+      setShareProject({ project, records: projectRecords });
+    }
+  };
+
   const handleAddRecord = async (data: Omit<FarmRecord, 'id' | 'projectId' | 'isLocked' | 'createdAt' | 'updatedAt'>) => {
     if (!selectedProject) return;
     try {
@@ -177,14 +189,23 @@ const Index = () => {
       <div className="min-h-screen bg-gradient-earth">
         <Header />
         <main className="container px-4 py-6 space-y-6">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={() => setSelectedProject(null)}>
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <div>
-              <h2 className="font-serif text-2xl font-semibold">{selectedProject.title}</h2>
-              <p className="text-sm text-muted-foreground font-mono">ID: {selectedProject.id.slice(0, 8)}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="icon" onClick={() => setSelectedProject(null)}>
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <div>
+                <h2 className="font-serif text-2xl font-semibold">{selectedProject.title}</h2>
+                <p className="text-sm text-muted-foreground font-mono">ID: {selectedProject.id.slice(0, 8)}</p>
+              </div>
             </div>
+            <Button
+              variant="outline"
+              onClick={() => setShareProject({ project: selectedProject, records })}
+            >
+              <Share2 className="h-4 w-4 mr-2" />
+              Share
+            </Button>
           </div>
 
           <MonthlySummary aggregations={aggregations} />
@@ -201,6 +222,15 @@ const Index = () => {
             />
           </div>
         </main>
+
+        {shareProject && (
+          <QRShareDialog
+            open={!!shareProject}
+            onOpenChange={() => setShareProject(null)}
+            project={shareProject.project}
+            records={shareProject.records}
+          />
+        )}
       </div>
     );
   }
@@ -234,19 +264,25 @@ const Index = () => {
             </div>
             <div className="flex items-center gap-2 bg-card px-4 py-2 rounded-full shadow-card">
               <QrCode className="h-4 w-4 text-primary" />
-              <span>QR Sync (Coming)</span>
+              <span>QR Sync</span>
             </div>
           </div>
         </section>
 
         {/* Projects Section */}
         <section>
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <h2 className="font-serif text-xl font-semibold">Your Projects</h2>
-            <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
-              <Plus className="h-4 w-4" />
-              New Project
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
+                <ScanLine className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+              <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                New Project
+              </Button>
+            </div>
           </div>
 
           {isLoading ? (
@@ -262,10 +298,16 @@ const Index = () => {
               <p className="text-muted-foreground mb-6">
                 Create your first farm project to start tracking records.
               </p>
-              <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
-                <Plus className="h-4 w-4" />
-                Create First Project
-              </Button>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
+                  <ScanLine className="h-4 w-4 mr-2" />
+                  Import Project
+                </Button>
+                <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  Create First Project
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -275,6 +317,7 @@ const Index = () => {
                     project={project}
                     onSelect={handleSelectProject}
                     onDelete={setDeleteProjectId}
+                    onShare={handleShareProject}
                     recordCount={recordCounts[project.id] || 0}
                   />
                 </div>
@@ -289,6 +332,21 @@ const Index = () => {
         onOpenChange={setIsCreateOpen}
         onSubmit={handleCreateProject}
       />
+
+      <QRScannerDialog
+        open={isScannerOpen}
+        onOpenChange={setIsScannerOpen}
+        onImportComplete={loadProjects}
+      />
+
+      {shareProject && (
+        <QRShareDialog
+          open={!!shareProject}
+          onOpenChange={() => setShareProject(null)}
+          project={shareProject.project}
+          records={shareProject.records}
+        />
+      )}
 
       <AlertDialog open={!!deleteProjectId} onOpenChange={() => setDeleteProjectId(null)}>
         <AlertDialogContent>
