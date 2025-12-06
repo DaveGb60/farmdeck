@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FarmProject, FarmRecord, getProject, importProject, importRecord } from '@/lib/db';
+import { FarmProject, FarmRecord, getProject, importProject, importRecord, createDefaultProjectDetails } from '@/lib/db';
 import { Camera, FileUp, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -170,6 +170,9 @@ export function QRScannerDialog({ open, onOpenChange, onImportComplete }: QRScan
           customColumns: projectData.customColumns || [],
           createdAt: projectData.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
+          isCompleted: projectData.isCompleted || false,
+          completedAt: projectData.completedAt,
+          details: projectData.details || createDefaultProjectDetails(),
         });
         
         // Import records if available (preserving original IDs)
