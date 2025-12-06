@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { FarmProject, FarmRecord, createProject, createRecord, getProject } from '@/lib/db';
+import { FarmProject, FarmRecord, getProject, importProject, importRecord } from '@/lib/db';
 import { Camera, FileUp, AlertCircle, Check, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
@@ -147,48 +147,38 @@ export function QRScannerDialog({ open, onOpenChange, onImportComplete }: QRScan
       const existing = await getProject(projectData.id);
       
       if (existing) {
-        // Merge with existing project - add only new records
-        if (scannedData.records) {
-          for (const record of scannedData.records) {
-            try {
-              await createRecord(projectData.id, {
-                date: record.date,
-                item: record.item,
-                produceAmount: record.produceAmount,
-                inputCost: record.inputCost,
-                revenue: record.revenue,
-                comment: record.comment,
-                customFields: record.customFields,
-              });
-            } catch (e) {
-              // Skip duplicate records
-            }
-          }
-        }
-        toast({ title: 'Project synced successfully' });
-      } else {
-        // Create new project
-        const newProject = await createProject(
-          projectData.title,
-          projectData.startDate,
-          projectData.customColumns || []
-        );
+        // Merge with existing project - update project metadata and sync records
+        await importProject({
+          ...existing,
+          title: projectData.title,
+          customColumns: projectData.customColumns || existing.customColumns,
+        });
         
-        // Import records if available
+        // Import/sync records if available (preserving original IDs)
         if (scannedData.records) {
           for (const record of scannedData.records) {
-            await createRecord(newProject.id, {
-              date: record.date,
-              item: record.item,
-              produceAmount: record.produceAmount,
-              inputCost: record.inputCost,
-              revenue: record.revenue,
-              comment: record.comment,
-              customFields: record.customFields,
-            });
+            await importRecord(record);
           }
         }
-        toast({ title: 'Project imported successfully' });
+        toast({ title: 'Project synced successfully', description: `${scannedData.records?.length || 0} records synced` });
+      } else {
+        // Create new project with the SAME ID to maintain consistency across devices
+        await importProject({
+          id: projectData.id,
+          title: projectData.title,
+          startDate: projectData.startDate,
+          customColumns: projectData.customColumns || [],
+          createdAt: projectData.createdAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        
+        // Import records if available (preserving original IDs)
+        if (scannedData.records) {
+          for (const record of scannedData.records) {
+            await importRecord(record);
+          }
+        }
+        toast({ title: 'Project imported successfully', description: `${scannedData.records?.length || 0} records imported` });
       }
       
       onImportComplete();
