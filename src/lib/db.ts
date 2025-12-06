@@ -82,11 +82,11 @@ export function generateId(): string {
 }
 
 // Project operations
-export async function createProject(title: string, startDate: string, customColumns: string[] = []): Promise<FarmProject> {
+export async function createProject(title: string, startDate: string, customColumns: string[] = [], existingId?: string): Promise<FarmProject> {
   const db = await getDB();
   const now = new Date().toISOString();
   const project: FarmProject = {
-    id: generateId(),
+    id: existingId || generateId(),
     title,
     startDate,
     createdAt: now,
@@ -95,6 +95,36 @@ export async function createProject(title: string, startDate: string, customColu
   };
   await db.put('projects', project);
   return project;
+}
+
+// Import a full project with its original ID (for syncing)
+export async function importProject(projectData: FarmProject): Promise<FarmProject> {
+  const db = await getDB();
+  const project: FarmProject = {
+    ...projectData,
+    updatedAt: new Date().toISOString(),
+  };
+  await db.put('projects', project);
+  return project;
+}
+
+// Import a record with its original ID (for syncing)
+export async function importRecord(record: FarmRecord): Promise<FarmRecord> {
+  const db = await getDB();
+  const existingRecord = await db.get('records', record.id);
+  
+  // If record already exists and is locked, don't overwrite
+  if (existingRecord?.isLocked) {
+    return existingRecord;
+  }
+  
+  // Preserve the original record data including ID and lock status
+  const importedRecord: FarmRecord = {
+    ...record,
+    updatedAt: new Date().toISOString(),
+  };
+  await db.put('records', importedRecord);
+  return importedRecord;
 }
 
 export async function getAllProjects(): Promise<FarmProject[]> {

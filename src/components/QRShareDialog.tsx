@@ -18,25 +18,7 @@ export function QRShareDialog({ open, onOpenChange, project, records }: QRShareD
   const [copied, setCopied] = useState(false);
   const { toast } = useToast();
 
-  // Create shareable data (project metadata only for QR - full data is too large)
-  const projectShareData = {
-    type: 'farmdeck_project',
-    version: 1,
-    project: {
-      id: project.id,
-      title: project.title,
-      startDate: project.startDate,
-      customColumns: project.customColumns,
-    },
-    recordCount: records.length,
-    // Include summary for quick preview
-    summary: {
-      totalRecords: records.length,
-      lockedRecords: records.filter(r => r.isLocked).length,
-    }
-  };
-
-  // Create full export data (for copy/download)
+  // Create full export data (includes all records for proper syncing)
   const fullExportData = {
     type: 'farmdeck_full_export',
     version: 1,
@@ -45,7 +27,55 @@ export function QRShareDialog({ open, onOpenChange, project, records }: QRShareD
     records: records,
   };
 
-  const qrData = JSON.stringify(projectShareData);
+  // For QR code, we need to be smart about size limits (~2KB max for reliable scanning)
+  // Include full project data and as many records as possible
+  const createQRData = () => {
+    const baseData = {
+      type: 'farmdeck_full_export',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      project: project,
+      records: records,
+    };
+    
+    let qrString = JSON.stringify(baseData);
+    
+    // If data is too large for QR, progressively reduce records
+    if (qrString.length > 2000) {
+      // Try with minimal record data (just essential fields)
+      const minimalRecords = records.map(r => ({
+        id: r.id,
+        projectId: r.projectId,
+        date: r.date,
+        item: r.item,
+        produceAmount: r.produceAmount,
+        inputCost: r.inputCost,
+        revenue: r.revenue,
+        comment: r.comment || '',
+        isLocked: r.isLocked,
+        lockedAt: r.lockedAt,
+        customFields: r.customFields,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+      
+      baseData.records = minimalRecords;
+      qrString = JSON.stringify(baseData);
+      
+      // If still too large, include fewer records with a warning
+      if (qrString.length > 2000) {
+        const maxRecords = Math.floor(records.length * (2000 / qrString.length));
+        baseData.records = minimalRecords.slice(0, Math.max(1, maxRecords));
+        qrString = JSON.stringify(baseData);
+      }
+    }
+    
+    return { data: baseData, jsonString: qrString, includedRecords: baseData.records.length };
+  };
+
+  const qrResult = createQRData();
+  const qrData = qrResult.jsonString;
+  const qrIncludedRecords = qrResult.includedRecords;
   const fullDataString = JSON.stringify(fullExportData, null, 2);
 
   const handleCopy = async () => {
@@ -106,6 +136,11 @@ export function QRShareDialog({ open, onOpenChange, project, records }: QRShareD
               <p className="text-sm text-muted-foreground mt-4 text-center">
                 Scan this QR code with another FarmDeck device to sync this project
               </p>
+              {qrIncludedRecords < records.length && (
+                <p className="text-xs text-amber-600 mt-2 text-center">
+                  ⚠️ QR includes {qrIncludedRecords}/{records.length} records. Use Export Data tab for full sync.
+                </p>
+              )}
             </div>
 
             <div className="bg-muted/50 rounded-lg p-3 text-sm">
