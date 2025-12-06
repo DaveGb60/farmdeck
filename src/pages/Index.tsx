@@ -6,6 +6,7 @@ import { RecordTable } from '@/components/RecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
 import { QRShareDialog } from '@/components/QRShareDialog';
 import { QRScannerDialog } from '@/components/QRScannerDialog';
+import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -32,7 +33,7 @@ import {
   lockRecord,
   getMonthlyAggregation,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2 } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2, FileDown } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -46,6 +47,7 @@ const Index = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [shareProject, setShareProject] = useState<{ project: FarmProject; records: FarmRecord[] } | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isPDFExportOpen, setIsPDFExportOpen] = useState(false);
   const { toast } = useToast();
 
   // Load projects
@@ -199,13 +201,22 @@ const Index = () => {
                 <p className="text-sm text-muted-foreground font-mono">ID: {selectedProject.id.slice(0, 8)}</p>
               </div>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => setShareProject({ project: selectedProject, records })}
-            >
-              <Share2 className="h-4 w-4 mr-2" />
-              Share
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setIsPDFExportOpen(true)}
+              >
+                <FileDown className="h-4 w-4 mr-2" />
+                Export PDF
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShareProject({ project: selectedProject, records })}
+              >
+                <Share2 className="h-4 w-4 mr-2" />
+                Share
+              </Button>
+            </div>
           </div>
 
           <MonthlySummary aggregations={aggregations} />
@@ -231,6 +242,14 @@ const Index = () => {
             records={shareProject.records}
           />
         )}
+
+        <PDFExportDialog
+          open={isPDFExportOpen}
+          onOpenChange={setIsPDFExportOpen}
+          project={selectedProject}
+          records={records}
+          aggregations={aggregations}
+        />
       </div>
     );
   }
