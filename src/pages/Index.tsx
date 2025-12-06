@@ -4,10 +4,12 @@ import { ProjectCard } from '@/components/ProjectCard';
 import { CreateProjectDialog } from '@/components/CreateProjectDialog';
 import { RecordTable } from '@/components/RecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
+import { ProjectDetailsSection } from '@/components/ProjectDetailsSection';
 import { QRShareDialog } from '@/components/QRShareDialog';
 import { QRScannerDialog } from '@/components/QRScannerDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,6 +24,7 @@ import {
   FarmProject,
   FarmRecord,
   MonthlyAggregation,
+  ProjectDetails,
   getAllProjects,
   createProject,
   deleteProject,
@@ -32,8 +35,10 @@ import {
   deleteRecord,
   lockRecord,
   getMonthlyAggregation,
+  updateProjectDetails,
+  completeProject,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2, FileDown } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2, FileDown, ClipboardList, Table2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -48,6 +53,7 @@ const Index = () => {
   const [shareProject, setShareProject] = useState<{ project: FarmProject; records: FarmRecord[] } | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isPDFExportOpen, setIsPDFExportOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState<'details' | 'components'>('details');
   const { toast } = useToast();
 
   // Load projects
@@ -175,6 +181,32 @@ const Index = () => {
     }
   };
 
+  const handleUpdateProjectDetails = async (details: ProjectDetails) => {
+    if (!selectedProject) return;
+    try {
+      await updateProjectDetails(selectedProject.id, details);
+      setSelectedProject({ ...selectedProject, details });
+      toast({ title: 'Project details updated' });
+    } catch (error) {
+      toast({ title: 'Error updating details', variant: 'destructive' });
+    }
+  };
+
+  const handleCompleteProject = async () => {
+    if (!selectedProject) return;
+    try {
+      await completeProject(selectedProject.id);
+      setSelectedProject({ 
+        ...selectedProject, 
+        isCompleted: true, 
+        completedAt: new Date().toISOString() 
+      });
+      toast({ title: 'Project marked as completed' });
+    } catch (error) {
+      toast({ title: 'Error completing project', variant: 'destructive' });
+    }
+  };
+
   const handleLockRecord = async (id: string) => {
     try {
       await lockRecord(id);
@@ -191,7 +223,7 @@ const Index = () => {
       <div className="min-h-screen bg-gradient-earth">
         <Header />
         <main className="container px-4 py-6 space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="icon" onClick={() => setSelectedProject(null)}>
                 <ArrowLeft className="h-5 w-5" />
@@ -219,19 +251,49 @@ const Index = () => {
             </div>
           </div>
 
-          <MonthlySummary aggregations={aggregations} />
+          {/* Dual Section Tabs */}
+          <Tabs value={activeSection} onValueChange={(v) => setActiveSection(v as 'details' | 'components')} className="w-full">
+            <TabsList className="grid w-full grid-cols-2 max-w-md">
+              <TabsTrigger value="details" className="gap-2">
+                <ClipboardList className="h-4 w-4" />
+                Project Details
+              </TabsTrigger>
+              <TabsTrigger value="components" className="gap-2">
+                <Table2 className="h-4 w-4" />
+                Components
+              </TabsTrigger>
+            </TabsList>
 
-          <div>
-            <h3 className="font-serif text-lg font-semibold mb-4">Records</h3>
-            <RecordTable
-              project={selectedProject}
-              records={records}
-              onAddRecord={handleAddRecord}
-              onUpdateRecord={handleUpdateRecord}
-              onDeleteRecord={handleDeleteRecord}
-              onLockRecord={handleLockRecord}
-            />
-          </div>
+            {/* Section 1: Project Main Details */}
+            <TabsContent value="details" className="space-y-6 mt-6">
+              <ProjectDetailsSection
+                project={selectedProject}
+                onUpdateDetails={handleUpdateProjectDetails}
+                onCompleteProject={handleCompleteProject}
+              />
+              <MonthlySummary aggregations={aggregations} />
+            </TabsContent>
+
+            {/* Section 2: Project Components Details (Records) */}
+            <TabsContent value="components" className="space-y-6 mt-6">
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-serif text-lg font-semibold">Component Records</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {records.filter(r => r.isLocked).length}/{records.length} locked
+                  </p>
+                </div>
+                <RecordTable
+                  project={selectedProject}
+                  records={records}
+                  onAddRecord={handleAddRecord}
+                  onUpdateRecord={handleUpdateRecord}
+                  onDeleteRecord={handleDeleteRecord}
+                  onLockRecord={handleLockRecord}
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
         </main>
 
         {shareProject && (

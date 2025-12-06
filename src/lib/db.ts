@@ -1,6 +1,16 @@
 // IndexedDB wrapper for FarmDeck local storage
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
+// Project Details (Section 1) - editable until project is completed
+export interface ProjectDetails {
+  capital: number;
+  totalItemCount: number;
+  totalCosts: number;
+  estimatedRevenue: number;
+  challengesSummary: string;
+  customDetails: Record<string, string | number>;
+}
+
 export interface FarmProject {
   id: string;
   title: string;
@@ -8,6 +18,9 @@ export interface FarmProject {
   createdAt: string;
   updatedAt: string;
   customColumns: string[];
+  isCompleted: boolean;
+  completedAt?: string;
+  details: ProjectDetails;
 }
 
 export interface FarmRecord {
@@ -81,6 +94,18 @@ export function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// Default project details
+export function createDefaultProjectDetails(): ProjectDetails {
+  return {
+    capital: 0,
+    totalItemCount: 0,
+    totalCosts: 0,
+    estimatedRevenue: 0,
+    challengesSummary: '',
+    customDetails: {},
+  };
+}
+
 // Project operations
 export async function createProject(title: string, startDate: string, customColumns: string[] = [], existingId?: string): Promise<FarmProject> {
   const db = await getDB();
@@ -92,6 +117,8 @@ export async function createProject(title: string, startDate: string, customColu
     createdAt: now,
     updatedAt: now,
     customColumns,
+    isCompleted: false,
+    details: createDefaultProjectDetails(),
   };
   await db.put('projects', project);
   return project;
@@ -102,10 +129,37 @@ export async function importProject(projectData: FarmProject): Promise<FarmProje
   const db = await getDB();
   const project: FarmProject = {
     ...projectData,
+    // Ensure details exists (for backward compatibility)
+    details: projectData.details || createDefaultProjectDetails(),
+    isCompleted: projectData.isCompleted || false,
     updatedAt: new Date().toISOString(),
   };
   await db.put('projects', project);
   return project;
+}
+
+// Update project details (Section 1)
+export async function updateProjectDetails(projectId: string, details: ProjectDetails): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', projectId);
+  if (!project) throw new Error('Project not found');
+  if (project.isCompleted) throw new Error('Cannot update a completed project');
+  
+  project.details = details;
+  project.updatedAt = new Date().toISOString();
+  await db.put('projects', project);
+}
+
+// Complete project (lock Section 1)
+export async function completeProject(projectId: string): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', projectId);
+  if (!project) throw new Error('Project not found');
+  
+  project.isCompleted = true;
+  project.completedAt = new Date().toISOString();
+  project.updatedAt = new Date().toISOString();
+  await db.put('projects', project);
 }
 
 // Import a record with its original ID (for syncing)
@@ -129,12 +183,25 @@ export async function importRecord(record: FarmRecord): Promise<FarmRecord> {
 
 export async function getAllProjects(): Promise<FarmProject[]> {
   const db = await getDB();
-  return db.getAll('projects');
+  const projects = await db.getAll('projects');
+  // Ensure backward compatibility for projects without new fields
+  return projects.map(p => ({
+    ...p,
+    isCompleted: p.isCompleted ?? false,
+    details: p.details ?? createDefaultProjectDetails(),
+  }));
 }
 
 export async function getProject(id: string): Promise<FarmProject | undefined> {
   const db = await getDB();
-  return db.get('projects', id);
+  const project = await db.get('projects', id);
+  if (!project) return undefined;
+  // Ensure backward compatibility for projects without new fields
+  return {
+    ...project,
+    isCompleted: project.isCompleted ?? false,
+    details: project.details ?? createDefaultProjectDetails(),
+  };
 }
 
 export async function updateProject(project: FarmProject): Promise<void> {

@@ -45,6 +45,9 @@ export function generateProjectPDF(options: PDFExportOptions): void {
   doc.setTextColor(100, 100, 100);
   doc.text(`Project ID: ${project.id.slice(0, 8)}`, 14, yPos);
   doc.text(`Start Date: ${format(new Date(project.startDate), 'MMMM d, yyyy')}`, 80, yPos);
+  if (project.isCompleted) {
+    doc.text(`Status: Completed`, 160, yPos);
+  }
   yPos += 6;
   doc.text(`Generated: ${format(new Date(), 'MMMM d, yyyy HH:mm')}`, 14, yPos);
   yPos += 12;
@@ -67,6 +70,86 @@ export function generateProjectPDF(options: PDFExportOptions): void {
   doc.setFont('helvetica', 'bold');
   doc.text(reportTitle, 14, yPos);
   yPos += 10;
+
+  // Project Details Section (Section 1)
+  if (project.details) {
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Project Details', 14, yPos);
+    yPos += 8;
+    
+    const details = project.details;
+    const boxWidth = 44;
+    const boxHeight = 24;
+    const startX = 14;
+    
+    // Capital
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(startX, yPos, boxWidth, boxHeight, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Capital', startX + 3, yPos + 7);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(details.capital.toLocaleString(undefined, { minimumFractionDigits: 2 }), startX + 3, yPos + 18);
+    
+    // Total Items
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(startX + boxWidth + 4, yPos, boxWidth, boxHeight, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Total Items', startX + boxWidth + 7, yPos + 7);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(0, 0, 0);
+    doc.text(details.totalItemCount.toLocaleString(), startX + boxWidth + 7, yPos + 18);
+    
+    // Total Costs
+    doc.setFillColor(254, 226, 226);
+    doc.roundedRect(startX + (boxWidth + 4) * 2, yPos, boxWidth, boxHeight, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Total Costs', startX + (boxWidth + 4) * 2 + 3, yPos + 7);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(220, 38, 38);
+    doc.text(`-${details.totalCosts.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 2 + 3, yPos + 18);
+    
+    // Est. Revenue
+    doc.setFillColor(220, 252, 231);
+    doc.roundedRect(startX + (boxWidth + 4) * 3, yPos, boxWidth, boxHeight, 2, 2, 'F');
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 100, 100);
+    doc.text('Est. Revenue', startX + (boxWidth + 4) * 3 + 3, yPos + 7);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(22, 163, 74);
+    doc.text(`+${details.estimatedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 3 + 3, yPos + 18);
+    
+    yPos += boxHeight + 8;
+
+    // Challenges Summary
+    if (details.challengesSummary) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(100, 100, 100);
+      doc.text('Challenges:', 14, yPos);
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(0, 0, 0);
+      const challengeLines = doc.splitTextToSize(details.challengesSummary, 180);
+      doc.text(challengeLines, 14, yPos);
+      yPos += challengeLines.length * 4 + 4;
+    }
+    
+    yPos += 8;
+  }
   
   // Summary Section
   if (filteredAggregations.length > 0) {
