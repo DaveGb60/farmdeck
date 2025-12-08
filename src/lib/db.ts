@@ -1,12 +1,19 @@
 // IndexedDB wrapper for FarmDeck local storage
 import { openDB, DBSchema, IDBPDatabase } from 'idb';
 
+// Input item for project details
+export interface InputItem {
+  name: string;
+  cost: number;
+}
+
 // Project Details (Section 1) - editable until project is completed
 export interface ProjectDetails {
   capital: number;
   totalItemCount: number;
-  totalCosts: number;
+  costs: number;
   estimatedRevenue: number;
+  inputs: InputItem[];
   challengesSummary: string;
   customDetails: Record<string, string | number>;
 }
@@ -27,10 +34,9 @@ export interface FarmRecord {
   id: string;
   projectId: string;
   date: string;
-  item: string;
+  item?: string; // Optional - for projects with multiple products
   produceAmount: number;
-  inputCost: number;
-  revenue: number;
+  produceRevenue: number;
   comment: string;
   isLocked: boolean;
   lockedAt?: string;
@@ -99,8 +105,9 @@ export function createDefaultProjectDetails(): ProjectDetails {
   return {
     capital: 0,
     totalItemCount: 0,
-    totalCosts: 0,
+    costs: 0,
     estimatedRevenue: 0,
+    inputs: [],
     challengesSummary: '',
     customDetails: {},
   };
@@ -297,9 +304,9 @@ export async function getMonthlyAggregation(projectId: string): Promise<MonthlyA
         recordCount: 0,
       };
     }
-    monthlyData[month].totalInputCost += record.inputCost || 0;
+    monthlyData[month].totalInputCost += 0; // Input costs now tracked in project details
     monthlyData[month].totalProduceAmount += record.produceAmount || 0;
-    monthlyData[month].totalRevenue += record.revenue || 0;
+    monthlyData[month].totalRevenue += record.produceRevenue || 0;
     monthlyData[month].recordCount += 1;
   }
 

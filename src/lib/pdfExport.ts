@@ -108,17 +108,17 @@ export function generateProjectPDF(options: PDFExportOptions): void {
     doc.setTextColor(0, 0, 0);
     doc.text(details.totalItemCount.toLocaleString(), startX + boxWidth + 7, yPos + 18);
     
-    // Total Costs
+    // Costs
     doc.setFillColor(254, 226, 226);
     doc.roundedRect(startX + (boxWidth + 4) * 2, yPos, boxWidth, boxHeight, 2, 2, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
-    doc.text('Total Costs', startX + (boxWidth + 4) * 2 + 3, yPos + 7);
+    doc.text('Costs', startX + (boxWidth + 4) * 2 + 3, yPos + 7);
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(220, 38, 38);
-    doc.text(`-${details.totalCosts.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 2 + 3, yPos + 18);
+    doc.text(`-${details.costs.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 2 + 3, yPos + 18);
     
     // Est. Revenue
     doc.setFillColor(220, 252, 231);
@@ -133,6 +133,22 @@ export function generateProjectPDF(options: PDFExportOptions): void {
     doc.text(`+${details.estimatedRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 3 + 3, yPos + 18);
     
     yPos += boxHeight + 8;
+
+    // Inputs Section
+    if (details.inputs && details.inputs.length > 0) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(100, 100, 100);
+      doc.text('Inputs:', 14, yPos);
+      yPos += 5;
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(0, 0, 0);
+      details.inputs.forEach((input) => {
+        doc.text(`• ${input.name}: ${input.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 18, yPos);
+        yPos += 4;
+      });
+      yPos += 4;
+    }
 
     // Challenges Summary
     if (details.challengesSummary) {
@@ -287,29 +303,27 @@ export function generateProjectPDF(options: PDFExportOptions): void {
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
       .map(record => [
         format(new Date(record.date), 'MMM d, yyyy'),
-        record.item,
+        record.item || '-',
         record.produceAmount.toLocaleString(),
-        `+${record.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-        `-${record.inputCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
+        `+${(record.produceRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
         record.isLocked ? '🔒' : '○',
-        record.comment?.slice(0, 30) || '-',
+        record.comment?.slice(0, 40) || '-',
       ]);
     
     autoTable(doc, {
       startY: yPos,
-      head: [['Date', 'Item', 'Produce', 'Revenue', 'Cost', 'Lock', 'Comment']],
+      head: [['Date', 'Item', 'Produce', 'Revenue', 'Lock', 'Comment']],
       body: recordsData,
       theme: 'striped',
       headStyles: { fillColor: primaryColor, fontSize: 8 },
       bodyStyles: { fontSize: 8 },
       columnStyles: {
         0: { cellWidth: 24 },
-        1: { cellWidth: 35 },
+        1: { cellWidth: 30 },
         2: { cellWidth: 20 },
-        3: { textColor: accentColor, cellWidth: 24 },
-        4: { textColor: [220, 38, 38], cellWidth: 24 },
-        5: { cellWidth: 12, halign: 'center' },
-        6: { cellWidth: 40 },
+        3: { textColor: accentColor, cellWidth: 28 },
+        4: { cellWidth: 12, halign: 'center' },
+        5: { cellWidth: 50 },
       },
     });
   }
