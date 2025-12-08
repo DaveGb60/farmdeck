@@ -28,6 +28,9 @@ export interface FarmProject {
   isCompleted: boolean;
   completedAt?: string;
   details: ProjectDetails;
+  // Soft delete fields
+  deletedAt?: string;
+  isDeleted?: boolean;
 }
 
 export interface FarmRecord {
@@ -191,12 +194,28 @@ export async function importRecord(record: FarmRecord): Promise<FarmRecord> {
 export async function getAllProjects(): Promise<FarmProject[]> {
   const db = await getDB();
   const projects = await db.getAll('projects');
-  // Ensure backward compatibility for projects without new fields
-  return projects.map(p => ({
-    ...p,
-    isCompleted: p.isCompleted ?? false,
-    details: p.details ?? createDefaultProjectDetails(),
-  }));
+  // Filter out deleted projects and ensure backward compatibility
+  return projects
+    .filter(p => !p.isDeleted)
+    .map(p => ({
+      ...p,
+      isCompleted: p.isCompleted ?? false,
+      details: p.details ?? createDefaultProjectDetails(),
+    }));
+}
+
+// Get only deleted projects (for trash)
+export async function getDeletedProjects(): Promise<FarmProject[]> {
+  const db = await getDB();
+  const projects = await db.getAll('projects');
+  return projects
+    .filter(p => p.isDeleted)
+    .map(p => ({
+      ...p,
+      isCompleted: p.isCompleted ?? false,
+      details: p.details ?? createDefaultProjectDetails(),
+    }))
+    .sort((a, b) => new Date(b.deletedAt!).getTime() - new Date(a.deletedAt!).getTime());
 }
 
 export async function getProject(id: string): Promise<FarmProject | undefined> {
@@ -217,9 +236,33 @@ export async function updateProject(project: FarmProject): Promise<void> {
   await db.put('projects', project);
 }
 
+// Soft delete - moves project to trash
 export async function deleteProject(id: string): Promise<void> {
   const db = await getDB();
-  // Delete all records for this project first
+  const project = await db.get('projects', id);
+  if (!project) throw new Error('Project not found');
+  
+  project.isDeleted = true;
+  project.deletedAt = new Date().toISOString();
+  project.updatedAt = new Date().toISOString();
+  await db.put('projects', project);
+}
+
+// Restore project from trash
+export async function restoreProject(id: string): Promise<void> {
+  const db = await getDB();
+  const project = await db.get('projects', id);
+  if (!project) throw new Error('Project not found');
+  
+  project.isDeleted = false;
+  project.deletedAt = undefined;
+  project.updatedAt = new Date().toISOString();
+  await db.put('projects', project);
+}
+
+// Permanently delete project and all its records
+export async function permanentlyDeleteProject(id: string): Promise<void> {
+  const db = await getDB();
   const records = await getRecordsByProject(id);
   const tx = db.transaction(['projects', 'records'], 'readwrite');
   for (const record of records) {
@@ -227,6 +270,23 @@ export async function deleteProject(id: string): Promise<void> {
   }
   await tx.objectStore('projects').delete(id);
   await tx.done;
+}
+
+// Clean up projects that have been in trash for more than 30 days
+export async function cleanupOldTrash(): Promise<void> {
+  const db = await getDB();
+  const projects = await db.getAll('projects');
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
+  for (const project of projects) {
+    if (project.isDeleted && project.deletedAt) {
+      const deletedDate = new Date(project.deletedAt);
+      if (deletedDate < thirtyDaysAgo) {
+        await permanentlyDeleteProject(project.id);
+      }
+    }
+  }
 }
 
 // Record operations
