@@ -49,8 +49,7 @@ export function QRShareDialog({ open, onOpenChange, project, records }: QRShareD
         date: r.date,
         item: r.item,
         produceAmount: r.produceAmount,
-        inputCost: r.inputCost,
-        revenue: r.revenue,
+        produceRevenue: r.produceRevenue,
         comment: r.comment || '',
         isLocked: r.isLocked,
         lockedAt: r.lockedAt,
@@ -59,13 +58,13 @@ export function QRShareDialog({ open, onOpenChange, project, records }: QRShareD
         updatedAt: r.updatedAt,
       }));
       
-      baseData.records = minimalRecords;
+      baseData.records = minimalRecords as FarmRecord[];
       qrString = JSON.stringify(baseData);
       
       // If still too large, include fewer records with a warning
       if (qrString.length > 2000) {
         const maxRecords = Math.floor(records.length * (2000 / qrString.length));
-        baseData.records = minimalRecords.slice(0, Math.max(1, maxRecords));
+        baseData.records = minimalRecords.slice(0, Math.max(1, maxRecords)) as FarmRecord[];
         qrString = JSON.stringify(baseData);
       }
     }

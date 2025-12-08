@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { FarmRecord, FarmProject } from '@/lib/db';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Plus, Trash2, Lock, ChevronDown, MessageSquare, Save } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -22,11 +23,23 @@ interface NewRecordState {
   date: string;
   item: string;
   produceAmount: string;
-  inputCost: string;
-  revenue: string;
+  produceRevenue: string;
   comment: string;
   customFields: Record<string, string>;
 }
+
+// Field definitions for long-press tooltips
+const fieldDefinitions: Record<string, string> = {
+  date: "The date when this record entry was made or when the activity occurred",
+  item: "Optional: Specify the product type if your project has multiple outputs (e.g., milk, manure, beef for a cow project)",
+  produce: "The quantity or amount produced/harvested in this entry",
+  produceRevenue: "The income earned from selling the produce in this entry",
+  comment: "Additional notes, specifications, or details about this entry",
+  lock: "Check to lock this entry. Once locked, it cannot be edited or deleted",
+};
+
+// Check if Item column should show (user has added it to custom columns)
+const hasItemColumn = (project: FarmProject) => project.customColumns.includes('Item');
 
 export function RecordTable({
   project,
@@ -40,14 +53,17 @@ export function RecordTable({
     date: new Date().toISOString().split('T')[0],
     item: '',
     produceAmount: '',
-    inputCost: '',
-    revenue: '',
+    produceRevenue: '',
     comment: '',
     customFields: {},
   });
   const [expandedComments, setExpandedComments] = useState<Set<string>>(new Set());
   const [editingRecord, setEditingRecord] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<FarmRecord>>({});
+
+  const showItemColumn = hasItemColumn(project);
+  // Filter out 'Item' from custom columns since it's handled separately
+  const customColumns = project.customColumns.filter(col => col !== 'Item');
 
   const toggleComment = (id: string) => {
     const newExpanded = new Set(expandedComments);
@@ -60,8 +76,6 @@ export function RecordTable({
   };
 
   const handleAddRecord = () => {
-    if (!newRecord.item.trim()) return;
-    
     const customFieldsNumeric: Record<string, string | number> = {};
     for (const key in newRecord.customFields) {
       const val = newRecord.customFields[key];
@@ -70,10 +84,9 @@ export function RecordTable({
 
     onAddRecord({
       date: newRecord.date,
-      item: newRecord.item.trim(),
+      item: showItemColumn ? newRecord.item.trim() : undefined,
       produceAmount: parseFloat(newRecord.produceAmount) || 0,
-      inputCost: parseFloat(newRecord.inputCost) || 0,
-      revenue: parseFloat(newRecord.revenue) || 0,
+      produceRevenue: parseFloat(newRecord.produceRevenue) || 0,
       comment: newRecord.comment.trim(),
       customFields: customFieldsNumeric,
     });
@@ -82,8 +95,7 @@ export function RecordTable({
       date: new Date().toISOString().split('T')[0],
       item: '',
       produceAmount: '',
-      inputCost: '',
-      revenue: '',
+      produceRevenue: '',
       comment: '',
       customFields: {},
     });
@@ -103,243 +115,302 @@ export function RecordTable({
     }
   };
 
-  const sortedRecords = [...records].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  // Sort records by date and group by day
+  const sortedRecords = useMemo(() => {
+    return [...records].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [records]);
+
+  // Group records by date for border styling
+  const recordsByDate = useMemo(() => {
+    const groups: Record<string, FarmRecord[]> = {};
+    sortedRecords.forEach(record => {
+      if (!groups[record.date]) {
+        groups[record.date] = [];
+      }
+      groups[record.date].push(record);
+    });
+    return groups;
+  }, [sortedRecords]);
+
+  // Get border style for a record based on its position in date group
+  const getRecordBorderStyle = (record: FarmRecord, index: number) => {
+    const dateGroup = recordsByDate[record.date];
+    const isFirstInGroup = dateGroup[0].id === record.id;
+    const isLastInGroup = dateGroup[dateGroup.length - 1].id === record.id;
+    const isFirstRecord = index === 0;
+    
+    return cn(
+      "transition-colors",
+      // Green border for day groups
+      isFirstInGroup && !isFirstRecord && "border-t-2 border-t-success",
+      // Grey border between same-day records
+      !isFirstInGroup && "border-t border-t-muted-foreground/30",
+      // Locked styling
+      record.isLocked && "table-row-locked opacity-80",
+      editingRecord === record.id && "bg-accent/20"
+    );
+  };
+
+  const colSpan = 4 + (showItemColumn ? 1 : 0) + customColumns.length;
 
   return (
-    <div className="rounded-lg border border-border bg-card shadow-card overflow-hidden">
-      <div className="overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-muted/50">
-              <TableHead className="w-[100px]">Date</TableHead>
-              <TableHead>Item</TableHead>
-              <TableHead className="text-right">Produce</TableHead>
-              <TableHead className="text-right">Input Cost</TableHead>
-              <TableHead className="text-right">Revenue</TableHead>
-              {project.customColumns.map((col) => (
-                <TableHead key={col} className="text-right">{col}</TableHead>
-              ))}
-              <TableHead className="w-[50px]">Note</TableHead>
-              <TableHead className="w-[100px] text-center">Lock</TableHead>
-              <TableHead className="w-[80px]"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {/* New Record Row */}
-            <TableRow className="bg-success/5 border-l-4 border-l-success">
-              <TableCell>
-                <Input
-                  type="date"
-                  value={newRecord.date}
-                  onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
-                  className="h-8 text-sm bg-background"
-                />
-              </TableCell>
-              <TableCell>
-                <Input
-                  placeholder="Item name..."
-                  value={newRecord.item}
-                  onChange={(e) => setNewRecord({ ...newRecord, item: e.target.value })}
-                  className="h-8 text-sm bg-background"
-                />
-              </TableCell>
-              <TableCell>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={newRecord.produceAmount}
-                  onChange={(e) => setNewRecord({ ...newRecord, produceAmount: e.target.value })}
-                  className="h-8 text-sm text-right bg-background"
-                />
-              </TableCell>
-              <TableCell>
-                <Input
-                  type="number"
-                  placeholder="0.00"
-                  value={newRecord.inputCost}
-                  onChange={(e) => setNewRecord({ ...newRecord, inputCost: e.target.value })}
-                  className="h-8 text-sm text-right bg-background"
-                />
-              </TableCell>
-              <TableCell>
-                <Input
-                  type="number"
-                  placeholder="0.00"
-                  value={newRecord.revenue}
-                  onChange={(e) => setNewRecord({ ...newRecord, revenue: e.target.value })}
-                  className="h-8 text-sm text-right bg-background"
-                />
-              </TableCell>
-              {project.customColumns.map((col) => (
-                <TableCell key={col}>
+    <TooltipProvider delayDuration={500}>
+      <div className="rounded-lg border border-border bg-card shadow-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/50">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <TableHead className="w-[100px] cursor-help">Date</TableHead>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[200px]">
+                    <p className="text-xs">{fieldDefinitions.date}</p>
+                  </TooltipContent>
+                </Tooltip>
+                {showItemColumn && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <TableHead className="cursor-help">Item</TableHead>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-[200px]">
+                      <p className="text-xs">{fieldDefinitions.item}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <TableHead className="text-right cursor-help">Produce</TableHead>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[200px]">
+                    <p className="text-xs">{fieldDefinitions.produce}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <TableHead className="text-right cursor-help">Revenue</TableHead>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[200px]">
+                    <p className="text-xs">{fieldDefinitions.produceRevenue}</p>
+                  </TooltipContent>
+                </Tooltip>
+                {customColumns.map((col) => (
+                  <TableHead key={col} className="text-right">{col}</TableHead>
+                ))}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <TableHead className="w-[50px] cursor-help">Comment</TableHead>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[200px]">
+                    <p className="text-xs">{fieldDefinitions.comment}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <TableHead className="w-[100px] text-center cursor-help">Lock</TableHead>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[200px]">
+                    <p className="text-xs">{fieldDefinitions.lock}</p>
+                  </TooltipContent>
+                </Tooltip>
+                <TableHead className="w-[80px]"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {/* New Record Row */}
+              <TableRow className="bg-success/5 border-l-4 border-l-success">
+                <TableCell>
                   <Input
-                    placeholder="-"
-                    value={newRecord.customFields[col] || ''}
-                    onChange={(e) => setNewRecord({
-                      ...newRecord,
-                      customFields: { ...newRecord.customFields, [col]: e.target.value }
-                    })}
+                    type="date"
+                    value={newRecord.date}
+                    onChange={(e) => setNewRecord({ ...newRecord, date: e.target.value })}
+                    className="h-8 text-sm bg-background"
+                  />
+                </TableCell>
+                {showItemColumn && (
+                  <TableCell>
+                    <Input
+                      placeholder="Item..."
+                      value={newRecord.item}
+                      onChange={(e) => setNewRecord({ ...newRecord, item: e.target.value })}
+                      className="h-8 text-sm bg-background"
+                    />
+                  </TableCell>
+                )}
+                <TableCell>
+                  <Input
+                    type="number"
+                    placeholder="0"
+                    value={newRecord.produceAmount}
+                    onChange={(e) => setNewRecord({ ...newRecord, produceAmount: e.target.value })}
                     className="h-8 text-sm text-right bg-background"
                   />
                 </TableCell>
-              ))}
-              <TableCell>
-                <Input
-                  placeholder="Note..."
-                  value={newRecord.comment}
-                  onChange={(e) => setNewRecord({ ...newRecord, comment: e.target.value })}
-                  className="h-8 text-sm bg-background"
-                />
-              </TableCell>
-              <TableCell></TableCell>
-              <TableCell>
-                <Button
-                  variant="success"
-                  size="sm"
-                  onClick={handleAddRecord}
-                  disabled={!newRecord.item.trim()}
-                  className="w-full"
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </TableCell>
-            </TableRow>
-
-            {/* Existing Records */}
-            {sortedRecords.map((record) => (
-              <Collapsible key={record.id} asChild>
-                <>
-                  <TableRow
-                    className={cn(
-                      "transition-colors",
-                      record.isLocked && "table-row-locked opacity-80",
-                      editingRecord === record.id && "bg-accent/20"
-                    )}
+                <TableCell>
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={newRecord.produceRevenue}
+                    onChange={(e) => setNewRecord({ ...newRecord, produceRevenue: e.target.value })}
+                    className="h-8 text-sm text-right bg-background"
+                  />
+                </TableCell>
+                {customColumns.map((col) => (
+                  <TableCell key={col}>
+                    <Input
+                      placeholder="-"
+                      value={newRecord.customFields[col] || ''}
+                      onChange={(e) => setNewRecord({
+                        ...newRecord,
+                        customFields: { ...newRecord.customFields, [col]: e.target.value }
+                      })}
+                      className="h-8 text-sm text-right bg-background"
+                    />
+                  </TableCell>
+                ))}
+                <TableCell>
+                  <Input
+                    placeholder="Comment..."
+                    value={newRecord.comment}
+                    onChange={(e) => setNewRecord({ ...newRecord, comment: e.target.value })}
+                    className="h-8 text-sm bg-background"
+                  />
+                </TableCell>
+                <TableCell></TableCell>
+                <TableCell>
+                  <Button
+                    variant="success"
+                    size="sm"
+                    onClick={handleAddRecord}
+                    className="w-full"
                   >
-                    <TableCell className="font-mono text-sm">
-                      {format(new Date(record.date), 'MMM d')}
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      {editingRecord === record.id ? (
-                        <Input
-                          value={editData.item || ''}
-                          onChange={(e) => setEditData({ ...editData, item: e.target.value })}
-                          className="h-8 text-sm"
-                        />
-                      ) : (
-                        <span className="cursor-pointer hover:text-primary" onClick={() => startEditing(record)}>
-                          {record.item}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {editingRecord === record.id ? (
-                        <Input
-                          type="number"
-                          value={editData.produceAmount || ''}
-                          onChange={(e) => setEditData({ ...editData, produceAmount: parseFloat(e.target.value) || 0 })}
-                          className="h-8 text-sm text-right"
-                        />
-                      ) : (
-                        record.produceAmount.toLocaleString()
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-destructive">
-                      {editingRecord === record.id ? (
-                        <Input
-                          type="number"
-                          value={editData.inputCost || ''}
-                          onChange={(e) => setEditData({ ...editData, inputCost: parseFloat(e.target.value) || 0 })}
-                          className="h-8 text-sm text-right"
-                        />
-                      ) : (
-                        `-${record.inputCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums text-success">
-                      {editingRecord === record.id ? (
-                        <Input
-                          type="number"
-                          value={editData.revenue || ''}
-                          onChange={(e) => setEditData({ ...editData, revenue: parseFloat(e.target.value) || 0 })}
-                          className="h-8 text-sm text-right"
-                        />
-                      ) : (
-                        `+${record.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                      )}
-                    </TableCell>
-                    {project.customColumns.map((col) => (
-                      <TableCell key={col} className="text-right tabular-nums">
-                        {record.customFields[col] || '-'}
-                      </TableCell>
-                    ))}
-                    <TableCell>
-                      {record.comment && (
-                        <CollapsibleTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => toggleComment(record.id)}>
-                            <MessageSquare className={cn("h-4 w-4", expandedComments.has(record.id) && "text-primary")} />
-                          </Button>
-                        </CollapsibleTrigger>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      {record.isLocked ? (
-                        <Lock className="h-4 w-4 mx-auto text-locked" />
-                      ) : (
-                        <Checkbox
-                          checked={false}
-                          onCheckedChange={() => onLockRecord(record.id)}
-                          className="mx-auto"
-                        />
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {editingRecord === record.id ? (
-                          <Button variant="success" size="icon" className="h-7 w-7" onClick={saveEdit}>
-                            <Save className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          !record.isLocked && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-destructive hover:bg-destructive/10"
-                              onClick={() => onDeleteRecord(record.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                  {record.comment && (
-                    <CollapsibleContent asChild>
-                      <TableRow className="bg-muted/30">
-                        <TableCell colSpan={8 + project.customColumns.length} className="py-2 px-4">
-                          <div className="flex items-start gap-2 text-sm text-muted-foreground">
-                            <ChevronDown className="h-4 w-4 mt-0.5 shrink-0" />
-                            <p>{record.comment}</p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    </CollapsibleContent>
-                  )}
-                </>
-              </Collapsible>
-            ))}
-
-            {records.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8 + project.customColumns.length} className="h-24 text-center text-muted-foreground">
-                  No records yet. Add your first entry above.
+                    <Plus className="h-4 w-4" />
+                  </Button>
                 </TableCell>
               </TableRow>
-            )}
-          </TableBody>
-        </Table>
+
+              {/* Existing Records */}
+              {sortedRecords.map((record, index) => (
+                <Collapsible key={record.id} asChild>
+                  <>
+                    <TableRow className={getRecordBorderStyle(record, index)}>
+                      <TableCell className="font-mono text-sm">
+                        {format(new Date(record.date), 'MMM d')}
+                      </TableCell>
+                      {showItemColumn && (
+                        <TableCell className="font-medium">
+                          {editingRecord === record.id ? (
+                            <Input
+                              value={editData.item || ''}
+                              onChange={(e) => setEditData({ ...editData, item: e.target.value })}
+                              className="h-8 text-sm"
+                            />
+                          ) : (
+                            <span className="cursor-pointer hover:text-primary" onClick={() => startEditing(record)}>
+                              {record.item || '-'}
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
+                      <TableCell className="text-right tabular-nums">
+                        {editingRecord === record.id ? (
+                          <Input
+                            type="number"
+                            value={editData.produceAmount || ''}
+                            onChange={(e) => setEditData({ ...editData, produceAmount: parseFloat(e.target.value) || 0 })}
+                            className="h-8 text-sm text-right"
+                          />
+                        ) : (
+                          <span className="cursor-pointer hover:text-primary" onClick={() => startEditing(record)}>
+                            {record.produceAmount.toLocaleString()}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-success">
+                        {editingRecord === record.id ? (
+                          <Input
+                            type="number"
+                            value={editData.produceRevenue || ''}
+                            onChange={(e) => setEditData({ ...editData, produceRevenue: parseFloat(e.target.value) || 0 })}
+                            className="h-8 text-sm text-right"
+                          />
+                        ) : (
+                          `+${(record.produceRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                        )}
+                      </TableCell>
+                      {customColumns.map((col) => (
+                        <TableCell key={col} className="text-right tabular-nums">
+                          {record.customFields[col] || '-'}
+                        </TableCell>
+                      ))}
+                      <TableCell>
+                        {record.comment && (
+                          <CollapsibleTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => toggleComment(record.id)}>
+                              <MessageSquare className={cn("h-4 w-4", expandedComments.has(record.id) && "text-primary")} />
+                            </Button>
+                          </CollapsibleTrigger>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        {record.isLocked ? (
+                          <Lock className="h-4 w-4 mx-auto text-locked" />
+                        ) : (
+                          <Checkbox
+                            checked={false}
+                            onCheckedChange={() => onLockRecord(record.id)}
+                            className="mx-auto"
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          {editingRecord === record.id ? (
+                            <Button variant="success" size="icon" className="h-7 w-7" onClick={saveEdit}>
+                              <Save className="h-4 w-4" />
+                            </Button>
+                          ) : (
+                            !record.isLocked && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-destructive hover:bg-destructive/10"
+                                onClick={() => onDeleteRecord(record.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {record.comment && (
+                      <CollapsibleContent asChild>
+                        <TableRow className="bg-muted/30">
+                          <TableCell colSpan={colSpan + 2} className="py-2 px-4">
+                            <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                              <ChevronDown className="h-4 w-4 mt-0.5 shrink-0" />
+                              <p>{record.comment}</p>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      </CollapsibleContent>
+                    )}
+                  </>
+                </Collapsible>
+              ))}
+
+              {records.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={colSpan + 2} className="h-24 text-center text-muted-foreground">
+                    No records yet. Add your first entry above.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 }
