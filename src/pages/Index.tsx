@@ -5,8 +5,8 @@ import { CreateProjectDialog } from '@/components/CreateProjectDialog';
 import { RecordTable } from '@/components/RecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
 import { ProjectDetailsSection } from '@/components/ProjectDetailsSection';
-import { QRShareDialog } from '@/components/QRShareDialog';
-import { QRScannerDialog } from '@/components/QRScannerDialog';
+import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
+import { BluetoothImportDialog } from '@/components/BluetoothImportDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -38,7 +38,7 @@ import {
   updateProjectDetails,
   completeProject,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, QrCode, ScanLine, Share2, FileDown, ClipboardList, Table2 } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -300,7 +300,7 @@ const Index = () => {
         </main>
 
         {shareProject && (
-          <QRShareDialog
+          <BluetoothShareDialog
             open={!!shareProject}
             onOpenChange={() => setShareProject(null)}
             project={shareProject.project}
@@ -347,8 +347,8 @@ const Index = () => {
               <span>Tamper-Proof Records</span>
             </div>
             <div className="flex items-center gap-2 bg-card px-4 py-2 rounded-full shadow-card">
-              <QrCode className="h-4 w-4 text-primary" />
-              <span>QR Sync</span>
+              <Bluetooth className="h-4 w-4 text-primary" />
+              <span>Bluetooth Sync</span>
             </div>
           </div>
         </section>
@@ -359,7 +359,7 @@ const Index = () => {
             <h2 className="font-serif text-xl font-semibold">Your Projects</h2>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
-                <ScanLine className="h-4 w-4 mr-2" />
+                <Download className="h-4 w-4 mr-2" />
                 Import
               </Button>
               <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
@@ -384,7 +384,7 @@ const Index = () => {
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
                 <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
-                  <ScanLine className="h-4 w-4 mr-2" />
+                  <Download className="h-4 w-4 mr-2" />
                   Import Project
                 </Button>
                 <Button variant="hero" onClick={() => setIsCreateOpen(true)}>
@@ -417,14 +417,14 @@ const Index = () => {
         onSubmit={handleCreateProject}
       />
 
-      <QRScannerDialog
+      <BluetoothImportDialog
         open={isScannerOpen}
         onOpenChange={setIsScannerOpen}
         onImportComplete={loadProjects}
       />
 
       {shareProject && (
-        <QRShareDialog
+        <BluetoothShareDialog
           open={!!shareProject}
           onOpenChange={() => setShareProject(null)}
           project={shareProject.project}
