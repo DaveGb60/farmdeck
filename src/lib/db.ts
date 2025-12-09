@@ -346,9 +346,19 @@ export function getMonthFromDate(dateStr: string): string {
   return dateStr.substring(0, 7); // YYYY-MM
 }
 
-export async function getMonthlyAggregation(projectId: string): Promise<MonthlyAggregation[]> {
+// Calculate total project costs (inputs + costs from project details)
+export function calculateTotalProjectCosts(details: ProjectDetails): number {
+  const inputsCost = details.inputs?.reduce((sum, input) => sum + (input.cost || 0), 0) || 0;
+  return inputsCost + (details.costs || 0);
+}
+
+export async function getMonthlyAggregation(projectId: string, projectDetails?: ProjectDetails): Promise<MonthlyAggregation[]> {
   const records = await getRecordsByProject(projectId);
   const monthlyData: Record<string, MonthlyAggregation> = {};
+
+  // Calculate total project-level costs (to be distributed across months)
+  const totalProjectCosts = projectDetails ? calculateTotalProjectCosts(projectDetails) : 0;
+  const capital = projectDetails?.capital || 0;
 
   for (const record of records) {
     const month = getMonthFromDate(record.date);
@@ -364,16 +374,21 @@ export async function getMonthlyAggregation(projectId: string): Promise<MonthlyA
         recordCount: 0,
       };
     }
-    monthlyData[month].totalInputCost += 0; // Input costs now tracked in project details
     monthlyData[month].totalProduceAmount += record.produceAmount || 0;
     monthlyData[month].totalRevenue += record.produceRevenue || 0;
     monthlyData[month].recordCount += 1;
   }
 
-  // Calculate profits
+  const monthCount = Object.keys(monthlyData).length;
+  const costPerMonth = monthCount > 0 ? totalProjectCosts / monthCount : 0;
+  const capitalPerMonth = monthCount > 0 ? capital / monthCount : 0;
+
+  // Calculate profits with distributed costs
   for (const month in monthlyData) {
+    monthlyData[month].totalInputCost = costPerMonth;
     monthlyData[month].grossProfit = monthlyData[month].totalRevenue;
-    monthlyData[month].netProfit = monthlyData[month].totalRevenue - monthlyData[month].totalInputCost;
+    // Net profit = Revenue - Costs - Capital (all distributed per month)
+    monthlyData[month].netProfit = monthlyData[month].totalRevenue - costPerMonth - capitalPerMonth;
   }
 
   return Object.values(monthlyData).sort((a, b) => b.month.localeCompare(a.month));

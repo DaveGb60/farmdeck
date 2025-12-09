@@ -1,4 +1,4 @@
-import { MonthlyAggregation } from '@/lib/db';
+import { MonthlyAggregation, ProjectDetails, calculateTotalProjectCosts } from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { TrendingUp, TrendingDown, Minus, Calendar, FileText } from 'lucide-react';
 import { format, parse } from 'date-fns';
@@ -6,9 +6,14 @@ import { cn } from '@/lib/utils';
 
 interface MonthlySummaryProps {
   aggregations: MonthlyAggregation[];
+  projectDetails?: ProjectDetails;
 }
 
-export function MonthlySummary({ aggregations }: MonthlySummaryProps) {
+export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryProps) {
+  // Calculate total project costs for display
+  const totalProjectCosts = projectDetails ? calculateTotalProjectCosts(projectDetails) : 0;
+  const capital = projectDetails?.capital || 0;
+  
   if (aggregations.length === 0) {
     return (
       <Card className="bg-gradient-card shadow-card">
@@ -21,12 +26,62 @@ export function MonthlySummary({ aggregations }: MonthlySummaryProps) {
     );
   }
 
+  // Project-level summary
+  const totalRevenue = aggregations.reduce((sum, agg) => sum + agg.totalRevenue, 0);
+  const totalCostsWithCapital = totalProjectCosts + capital;
+  const overallProfit = totalRevenue - totalCostsWithCapital;
+
   return (
     <div className="space-y-4">
       <h3 className="font-serif text-lg font-semibold flex items-center gap-2">
         <Calendar className="h-5 w-5 text-primary" />
         Monthly Statements
       </h3>
+
+      {/* Project-Level Summary */}
+      <Card className="bg-gradient-card shadow-card border-primary/20">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-serif">Project Summary</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div>
+              <p className="text-muted-foreground text-xs">Total Revenue</p>
+              <p className="font-semibold tabular-nums text-success">
+                +{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Total Costs</p>
+              <p className="font-semibold tabular-nums text-destructive">
+                -{totalCostsWithCapital.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </p>
+              <p className="text-[10px] text-muted-foreground">(Inputs + Costs + Capital)</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Projected Profit/Loss</p>
+              <div className={cn(
+                "flex items-center gap-1 font-bold tabular-nums",
+                overallProfit > 0 && "text-success",
+                overallProfit < 0 && "text-destructive"
+              )}>
+                {overallProfit > 0 && <TrendingUp className="h-4 w-4" />}
+                {overallProfit < 0 && <TrendingDown className="h-4 w-4" />}
+                {overallProfit === 0 && <Minus className="h-4 w-4" />}
+                <span>
+                  {overallProfit > 0 ? '+' : ''}{overallProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+            <div>
+              <p className="text-muted-foreground text-xs">Total Records</p>
+              <p className="font-semibold tabular-nums">
+                {aggregations.reduce((sum, agg) => sum + agg.recordCount, 0)}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
       
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {aggregations.map((agg) => {
@@ -57,7 +112,7 @@ export function MonthlySummary({ aggregations }: MonthlySummaryProps) {
                     </p>
                   </div>
                   <div>
-                    <p className="text-muted-foreground text-xs">Total Costs</p>
+                    <p className="text-muted-foreground text-xs">Costs (Monthly Share)</p>
                     <p className="font-semibold tabular-nums text-destructive">
                       -{agg.totalInputCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </p>
