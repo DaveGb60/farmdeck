@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { FarmProject, FarmRecord, MonthlyAggregation } from './db';
+import { FarmProject, FarmRecord, MonthlyAggregation, calculateTotalProjectCosts } from './db';
 import { format, parse } from 'date-fns';
 
 interface PDFExportOptions {
@@ -175,17 +175,21 @@ export function generateProjectPDF(options: PDFExportOptions): void {
     doc.text('Summary', 14, yPos);
     yPos += 8;
     
+    // Calculate totals including project-level costs
+    const totalProjectCosts = project.details ? calculateTotalProjectCosts(project.details) : 0;
+    const capital = project.details?.capital || 0;
+    
     const totals = filteredAggregations.reduce(
       (acc, agg) => ({
         revenue: acc.revenue + agg.totalRevenue,
-        costs: acc.costs + agg.totalInputCost,
         produce: acc.produce + agg.totalProduceAmount,
         records: acc.records + agg.recordCount,
       }),
-      { revenue: 0, costs: 0, produce: 0, records: 0 }
+      { revenue: 0, produce: 0, records: 0 }
     );
     
-    const netProfit = totals.revenue - totals.costs;
+    // Net profit = Revenue - Total Costs - Capital
+    const netProfit = totals.revenue - totalProjectCosts - capital;
     
     // Summary boxes
     const boxWidth = 44;
@@ -216,17 +220,18 @@ export function generateProjectPDF(options: PDFExportOptions): void {
     doc.setTextColor(0, 0, 0);
     doc.text(totals.produce.toLocaleString(), startX + boxWidth + 7, yPos + 18);
     
-    // Gross Revenue
-    doc.setFillColor(220, 252, 231);
+    // Total Costs (including capital)
+    const totalAllCosts = totalProjectCosts + capital;
+    doc.setFillColor(254, 226, 226);
     doc.roundedRect(startX + (boxWidth + 4) * 2, yPos, boxWidth, boxHeight, 2, 2, 'F');
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(100, 100, 100);
-    doc.text('Gross Revenue', startX + (boxWidth + 4) * 2 + 3, yPos + 7);
+    doc.text('Total Costs', startX + (boxWidth + 4) * 2 + 3, yPos + 7);
     doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(22, 163, 74);
-    doc.text(`+${totals.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 2 + 3, yPos + 18);
+    doc.setTextColor(220, 38, 38);
+    doc.text(`-${totalAllCosts.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, startX + (boxWidth + 4) * 2 + 3, yPos + 18);
     
     // Net Profit
     const isProfit = netProfit >= 0;
@@ -306,7 +311,7 @@ export function generateProjectPDF(options: PDFExportOptions): void {
         record.item || '-',
         record.produceAmount.toLocaleString(),
         `+${(record.produceRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`,
-        record.isLocked ? '🔒' : '○',
+        record.isLocked ? '✓' : 'X',
         record.comment?.slice(0, 40) || '-',
       ]);
     

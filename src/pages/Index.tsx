@@ -64,7 +64,7 @@ const Index = () => {
   // Load records when project is selected
   useEffect(() => {
     if (selectedProject) {
-      loadRecords(selectedProject.id);
+      loadRecords(selectedProject.id, selectedProject.details);
     }
   }, [selectedProject]);
 
@@ -88,11 +88,11 @@ const Index = () => {
     }
   };
 
-  const loadRecords = async (projectId: string) => {
+  const loadRecords = async (projectId: string, projectDetails?: ProjectDetails) => {
     try {
       const projectRecords = await getRecordsByProject(projectId);
       setRecords(projectRecords);
-      const aggs = await getMonthlyAggregation(projectId);
+      const aggs = await getMonthlyAggregation(projectId, projectDetails);
       setAggregations(aggs);
     } catch (error) {
       toast({ title: 'Error loading records', variant: 'destructive' });
@@ -147,7 +147,7 @@ const Index = () => {
       const newRecord = await createRecord(selectedProject.id, data);
       setRecords([newRecord, ...records]);
       setRecordCounts({ ...recordCounts, [selectedProject.id]: (recordCounts[selectedProject.id] || 0) + 1 });
-      const aggs = await getMonthlyAggregation(selectedProject.id);
+      const aggs = await getMonthlyAggregation(selectedProject.id, selectedProject.details);
       setAggregations(aggs);
       toast({ title: 'Record added' });
     } catch (error) {
@@ -159,7 +159,7 @@ const Index = () => {
     try {
       await updateRecord(record);
       setRecords(records.map(r => r.id === record.id ? record : r));
-      const aggs = await getMonthlyAggregation(selectedProject!.id);
+      const aggs = await getMonthlyAggregation(selectedProject!.id, selectedProject?.details);
       setAggregations(aggs);
       toast({ title: 'Record updated' });
     } catch (error) {
@@ -173,7 +173,7 @@ const Index = () => {
       await deleteRecord(id);
       setRecords(records.filter(r => r.id !== id));
       setRecordCounts({ ...recordCounts, [selectedProject.id]: Math.max(0, (recordCounts[selectedProject.id] || 1) - 1) });
-      const aggs = await getMonthlyAggregation(selectedProject.id);
+      const aggs = await getMonthlyAggregation(selectedProject.id, selectedProject.details);
       setAggregations(aggs);
       toast({ title: 'Record deleted' });
     } catch (error) {
@@ -186,6 +186,9 @@ const Index = () => {
     try {
       await updateProjectDetails(selectedProject.id, details);
       setSelectedProject({ ...selectedProject, details });
+      // Recalculate aggregations with updated costs
+      const aggs = await getMonthlyAggregation(selectedProject.id, details);
+      setAggregations(aggs);
       toast({ title: 'Project details updated' });
     } catch (error) {
       toast({ title: 'Error updating details', variant: 'destructive' });
@@ -271,7 +274,7 @@ const Index = () => {
                 onUpdateDetails={handleUpdateProjectDetails}
                 onCompleteProject={handleCompleteProject}
               />
-              <MonthlySummary aggregations={aggregations} />
+              <MonthlySummary aggregations={aggregations} projectDetails={selectedProject.details} />
             </TabsContent>
 
             {/* Section 2: Project Components Details (Records) */}
