@@ -263,7 +263,7 @@ const Index = () => {
               </TabsTrigger>
               <TabsTrigger value="components" className="gap-2">
                 <Table2 className="h-4 w-4" />
-                Components
+                Records
               </TabsTrigger>
             </TabsList>
 
@@ -277,11 +277,11 @@ const Index = () => {
               <MonthlySummary aggregations={aggregations} projectDetails={selectedProject.details} />
             </TabsContent>
 
-            {/* Section 2: Project Components Details (Records) */}
+            {/* Section 2: Project Records */}
             <TabsContent value="components" className="space-y-6 mt-6">
               <div>
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-serif text-lg font-semibold">Component Records</h3>
+                  <h3 className="font-serif text-lg font-semibold">Project Records</h3>
                   <p className="text-sm text-muted-foreground">
                     {records.filter(r => r.isLocked).length}/{records.length} locked
                   </p>

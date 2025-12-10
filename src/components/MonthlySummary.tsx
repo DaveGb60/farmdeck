@@ -59,7 +59,7 @@ export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryP
               <p className="text-[10px] text-muted-foreground">(Inputs + Costs + Capital)</p>
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">Projected Profit/Loss</p>
+              <p className="text-muted-foreground text-xs">Realized Profit/Loss</p>
               <div className={cn(
                 "flex items-center gap-1 font-bold tabular-nums",
                 overallProfit > 0 && "text-success",
