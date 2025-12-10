@@ -38,18 +38,6 @@ export function ProjectCard({ project, onSelect, onDelete, onShare, recordCount 
           </div>
         </div>
         
-        {project.customColumns.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {project.customColumns.slice(0, 3).map((col) => (
-              <span key={col} className="text-xs bg-secondary text-secondary-foreground px-2 py-0.5 rounded-full">
-                {col}
-              </span>
-            ))}
-            {project.customColumns.length > 3 && (
-              <span className="text-xs text-muted-foreground">+{project.customColumns.length - 3} more</span>
-            )}
-          </div>
-        )}
 
         <div className="flex items-center justify-between pt-2 border-t border-border">
           <div className="flex gap-1">
