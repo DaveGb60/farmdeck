@@ -7,18 +7,34 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import { FarmProject, FarmRecord } from '@/lib/db';
 import {
   isBluetoothAvailable,
   downloadJSON,
   shareViaWebShare,
   copyToClipboard,
-  scanForBluetoothDevices,
-  connectToDevice,
+  connectToBluetoothDevice,
+  disconnectBluetooth,
+  sendDataViaBluetooth,
   exportToJSON,
+  isDeviceConnected,
+  BluetoothConnection,
+  TransferProgress,
 } from '@/lib/bluetoothSync';
 import { useToast } from '@/hooks/use-toast';
-import { Bluetooth, Download, Copy, Share2, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { 
+  Bluetooth, 
+  Download, 
+  Copy, 
+  Share2, 
+  Loader2, 
+  CheckCircle2, 
+  AlertCircle,
+  Send,
+  Unplug,
+  Smartphone,
+} from 'lucide-react';
 
 interface BluetoothShareDialogProps {
   open: boolean;
@@ -27,6 +43,8 @@ interface BluetoothShareDialogProps {
   records: FarmRecord[];
 }
 
+type ConnectionStatus = 'idle' | 'scanning' | 'connected' | 'sending' | 'complete' | 'error';
+
 export function BluetoothShareDialog({
   open,
   onOpenChange,
@@ -34,51 +52,101 @@ export function BluetoothShareDialog({
   records,
 }: BluetoothShareDialogProps) {
   const { toast } = useToast();
-  const [isConnecting, setIsConnecting] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [connectedDevice, setConnectedDevice] = useState<any | null>(null);
-  const [transferStatus, setTransferStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+  const [connection, setConnection] = useState<BluetoothConnection | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus>('idle');
+  const [transferProgress, setTransferProgress] = useState<TransferProgress | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const bluetoothSupported = isBluetoothAvailable();
   const webShareSupported = typeof navigator !== 'undefined' && 'share' in navigator;
 
-  const handleBluetoothConnect = async () => {
-    setIsConnecting(true);
-    setTransferStatus('connecting');
+  const exportData = exportToJSON(project, records);
+  const dataSize = new Blob([exportData]).size;
+
+  // User gesture: Scan and connect to device
+  const handleScanAndConnect = async () => {
+    setStatus('scanning');
+    setErrorMessage(null);
+    
     try {
-      const device = await scanForBluetoothDevices();
-      if (device) {
-        const connection = await connectToDevice(device);
-        if (connection) {
-          setConnectedDevice(device);
-          setTransferStatus('connected');
-          toast({ title: `Connected to ${device.name || 'device'}` });
-          
-          // Note: Actual data transfer via BLE requires the receiving device
-          // to be running a compatible BLE peripheral service.
-          // For now, show success and instruct to use file sharing as fallback.
-          toast({
-            title: 'Device connected',
-            description: 'For full data transfer, please use the file export option below.',
-          });
-        } else {
-          setTransferStatus('error');
-        }
-      } else {
-        setTransferStatus('idle');
+      const conn = await connectToBluetoothDevice();
+      
+      if (!conn) {
+        // User cancelled device picker
+        setStatus('idle');
+        return;
       }
+      
+      setConnection(conn);
+      setStatus('connected');
+      
+      toast({ 
+        title: `Connected to ${conn.device.name || 'Bluetooth Device'}`,
+        description: conn.characteristic 
+          ? 'Ready to send data' 
+          : 'Device connected - use file sharing for data transfer'
+      });
     } catch (error) {
-      setTransferStatus('error');
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Connection failed');
       toast({
-        title: 'Bluetooth error',
-        description: error instanceof Error ? error.message : 'Connection failed',
+        title: 'Connection failed',
+        description: error instanceof Error ? error.message : 'Could not connect to device',
         variant: 'destructive',
       });
-    } finally {
-      setIsConnecting(false);
     }
   };
 
+  // User gesture: Send data to connected device
+  const handleSendData = async () => {
+    if (!connection || !isDeviceConnected(connection)) {
+      toast({ title: 'Not connected', variant: 'destructive' });
+      return;
+    }
+
+    if (!connection.characteristic) {
+      toast({
+        title: 'Direct transfer not supported',
+        description: 'This device doesn\'t support FarmDeck data transfer. Please use file sharing instead.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setStatus('sending');
+    
+    try {
+      const success = await sendDataViaBluetooth(
+        connection,
+        exportData,
+        (progress) => setTransferProgress(progress)
+      );
+      
+      if (success) {
+        setStatus('complete');
+        toast({ title: 'Data sent successfully!' });
+      } else {
+        setStatus('error');
+        setErrorMessage('Transfer failed');
+      }
+    } catch (error) {
+      setStatus('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Transfer failed');
+    }
+  };
+
+  // User gesture: Disconnect device
+  const handleDisconnect = () => {
+    if (connection) {
+      disconnectBluetooth(connection);
+      setConnection(null);
+    }
+    setStatus('idle');
+    setTransferProgress(null);
+    setErrorMessage(null);
+  };
+
+  // File sharing handlers
   const handleDownload = () => {
     downloadJSON(project, records);
     toast({ title: 'File downloaded' });
@@ -89,7 +157,6 @@ export function BluetoothShareDialog({
     if (success) {
       toast({ title: 'Shared successfully' });
     } else {
-      // Fallback to download
       handleDownload();
     }
   };
@@ -103,11 +170,15 @@ export function BluetoothShareDialog({
     }
   };
 
-  const exportData = exportToJSON(project, records);
-  const dataSize = new Blob([exportData]).size;
+  const handleClose = (value: boolean) => {
+    if (!value) {
+      handleDisconnect();
+    }
+    onOpenChange(value);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="font-serif">Share Project</DialogTitle>
@@ -124,7 +195,7 @@ export function BluetoothShareDialog({
             </div>
           </div>
 
-          <Tabs defaultValue="file" className="w-full">
+          <Tabs defaultValue={bluetoothSupported ? "bluetooth" : "file"} className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="bluetooth" disabled={!bluetoothSupported}>
                 <Bluetooth className="h-4 w-4 mr-2" />
@@ -141,70 +212,114 @@ export function BluetoothShareDialog({
                 <div className="text-center p-4 text-muted-foreground">
                   <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">Bluetooth not available in this browser</p>
-                  <p className="text-xs mt-1">Use Chrome on Android or macOS for Bluetooth support</p>
+                  <p className="text-xs mt-1">Use Chrome on Android or macOS</p>
                 </div>
               ) : (
-                <>
-                  <div className="text-center space-y-3">
-                    {transferStatus === 'idle' && (
+                <div className="space-y-4">
+                  {/* Status Display */}
+                  <div className="text-center py-4">
+                    {status === 'idle' && (
                       <>
-                        <Bluetooth className="h-12 w-12 mx-auto text-primary opacity-70" />
+                        <Smartphone className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
                         <p className="text-sm text-muted-foreground">
-                          Connect to a nearby device to share this project
+                          Tap below to scan for nearby devices
                         </p>
                       </>
                     )}
-                    {transferStatus === 'connecting' && (
+                    {status === 'scanning' && (
                       <>
-                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin" />
-                        <p className="text-sm">Scanning for devices...</p>
+                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin mb-3" />
+                        <p className="text-sm">Select a device from the list...</p>
                       </>
                     )}
-                    {transferStatus === 'connected' && (
+                    {status === 'connected' && connection && (
                       <>
-                        <CheckCircle2 className="h-12 w-12 mx-auto text-green-500" />
-                        <p className="text-sm">Connected to {connectedDevice?.name || 'device'}</p>
+                        <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-3" />
+                        <p className="font-medium">{connection.device.name || 'Connected Device'}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {connection.characteristic 
+                            ? 'Ready to send data' 
+                            : 'Use file sharing for data transfer'}
+                        </p>
                       </>
                     )}
-                    {transferStatus === 'error' && (
+                    {status === 'sending' && transferProgress && (
                       <>
-                        <AlertCircle className="h-12 w-12 mx-auto text-destructive" />
-                        <p className="text-sm text-destructive">Connection failed</p>
+                        <Send className="h-12 w-12 mx-auto text-primary mb-3 animate-pulse" />
+                        <p className="text-sm mb-2">Sending data...</p>
+                        <Progress 
+                          value={(transferProgress.sent / transferProgress.total) * 100} 
+                          className="h-2"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {transferProgress.sent}/{transferProgress.total} chunks
+                        </p>
+                      </>
+                    )}
+                    {status === 'complete' && (
+                      <>
+                        <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-3" />
+                        <p className="font-medium text-green-600">Transfer Complete!</p>
+                      </>
+                    )}
+                    {status === 'error' && (
+                      <>
+                        <AlertCircle className="h-12 w-12 mx-auto text-destructive mb-3" />
+                        <p className="text-sm text-destructive">{errorMessage || 'Connection failed'}</p>
                       </>
                     )}
                   </div>
 
-                  <Button
-                    onClick={handleBluetoothConnect}
-                    disabled={isConnecting}
-                    className="w-full"
-                    variant="outline"
-                  >
-                    {isConnecting ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <Bluetooth className="h-4 w-4 mr-2" />
+                  {/* Action Buttons */}
+                  <div className="space-y-2">
+                    {(status === 'idle' || status === 'error') && (
+                      <Button onClick={handleScanAndConnect} className="w-full">
+                        <Bluetooth className="h-4 w-4 mr-2" />
+                        Scan for Devices
+                      </Button>
                     )}
-                    {transferStatus === 'connected' ? 'Connect Another Device' : 'Scan for Devices'}
-                  </Button>
+
+                    {status === 'connected' && connection?.characteristic && (
+                      <Button onClick={handleSendData} className="w-full">
+                        <Send className="h-4 w-4 mr-2" />
+                        Send Project Data
+                      </Button>
+                    )}
+
+                    {(status === 'connected' || status === 'complete') && (
+                      <Button onClick={handleDisconnect} variant="outline" className="w-full">
+                        <Unplug className="h-4 w-4 mr-2" />
+                        Disconnect
+                      </Button>
+                    )}
+
+                    {status === 'connected' && !connection?.characteristic && (
+                      <div className="bg-muted/50 rounded-lg p-3 text-center">
+                        <p className="text-xs text-muted-foreground mb-2">
+                          This device doesn't support direct data transfer.
+                          Use the File Export tab to share via other methods.
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
                   <p className="text-xs text-center text-muted-foreground">
-                    Note: Both devices must have Bluetooth enabled
+                    Both devices must have Bluetooth enabled and be nearby
                   </p>
-                </>
+                </div>
               )}
             </TabsContent>
 
             <TabsContent value="file" className="space-y-3 mt-4">
               <p className="text-sm text-muted-foreground text-center mb-4">
-                Export your project data as a file to share via any method
+                Export and share via any method
               </p>
 
               <div className="grid gap-2">
                 {webShareSupported && (
                   <Button onClick={handleWebShare} variant="outline" className="w-full justify-start">
                     <Share2 className="h-4 w-4 mr-3" />
-                    Share via Apps
+                    Share via Apps (AirDrop, Nearby Share, etc.)
                   </Button>
                 )}
                 
@@ -220,11 +335,11 @@ export function BluetoothShareDialog({
               </div>
 
               <div className="mt-4 p-3 bg-muted rounded-lg">
-                <p className="text-xs font-medium mb-2">Quick Share Instructions:</p>
+                <p className="text-xs font-medium mb-2">How to transfer:</p>
                 <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
-                  <li>Download or share the JSON file</li>
-                  <li>Send to the other device (Bluetooth, AirDrop, email, etc.)</li>
-                  <li>On the receiving device, open FarmDeck and tap Import</li>
+                  <li>Download or share the file</li>
+                  <li>Send to other device (AirDrop, email, messaging, etc.)</li>
+                  <li>On receiving device, open FarmDeck → Import</li>
                 </ol>
               </div>
             </TabsContent>

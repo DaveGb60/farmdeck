@@ -13,6 +13,10 @@ import {
   parseJSONImport,
   importSyncData,
   calculateSyncDiff,
+  connectToBluetoothDevice,
+  disconnectBluetooth,
+  isDeviceConnected,
+  BluetoothConnection,
   SyncData,
 } from '@/lib/bluetoothSync';
 import { useToast } from '@/hooks/use-toast';
@@ -25,6 +29,8 @@ import {
   AlertCircle,
   ArrowRight,
   ClipboardPaste,
+  Smartphone,
+  Unplug,
 } from 'lucide-react';
 
 interface BluetoothImportDialogProps {
@@ -32,6 +38,8 @@ interface BluetoothImportDialogProps {
   onOpenChange: (open: boolean) => void;
   onImportComplete: () => void;
 }
+
+type ConnectionStatus = 'idle' | 'scanning' | 'connected' | 'waiting' | 'received' | 'error';
 
 export function BluetoothImportDialog({
   open,
@@ -41,6 +49,7 @@ export function BluetoothImportDialog({
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  // File import state
   const [manualInput, setManualInput] = useState('');
   const [parsedData, setParsedData] = useState<SyncData | null>(null);
   const [syncPreview, setSyncPreview] = useState<{
@@ -52,6 +61,10 @@ export function BluetoothImportDialog({
   const [importStatus, setImportStatus] = useState<'idle' | 'preview' | 'importing' | 'success' | 'error'>('idle');
   const [error, setError] = useState<string | null>(null);
 
+  // Bluetooth state
+  const [connection, setConnection] = useState<BluetoothConnection | null>(null);
+  const [btStatus, setBtStatus] = useState<ConnectionStatus>('idle');
+
   const bluetoothSupported = isBluetoothAvailable();
 
   const resetState = () => {
@@ -60,13 +73,58 @@ export function BluetoothImportDialog({
     setImportStatus('idle');
     setError(null);
     setManualInput('');
+    if (connection) {
+      disconnectBluetooth(connection);
+      setConnection(null);
+    }
+    setBtStatus('idle');
+  };
+
+  // User gesture: Scan and connect for receiving
+  const handleScanAndConnect = async () => {
+    setBtStatus('scanning');
+    
+    try {
+      const conn = await connectToBluetoothDevice();
+      
+      if (!conn) {
+        setBtStatus('idle');
+        return;
+      }
+      
+      setConnection(conn);
+      setBtStatus('connected');
+      
+      toast({ 
+        title: `Connected to ${conn.device.name || 'Device'}`,
+        description: 'Ready to receive data via file transfer'
+      });
+      
+      // Note: Web Bluetooth can't receive unsolicited data from peripherals
+      // in most cases, so we guide users to file import
+      
+    } catch (error) {
+      setBtStatus('error');
+      toast({
+        title: 'Connection failed',
+        description: error instanceof Error ? error.message : 'Could not connect',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDisconnect = () => {
+    if (connection) {
+      disconnectBluetooth(connection);
+      setConnection(null);
+    }
+    setBtStatus('idle');
   };
 
   const handleParsedData = async (data: SyncData) => {
     setParsedData(data);
     setImportStatus('preview');
     
-    // Calculate sync diff
     const diff = await calculateSyncDiff(data);
     setSyncPreview({
       newRecords: diff.newRecords.length,
@@ -90,12 +148,11 @@ export function BluetoothImportDialog({
       }
       
       await handleParsedData(data);
-    } catch (err) {
+    } catch {
       setError('Failed to read file');
       setImportStatus('error');
     }
     
-    // Reset file input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -105,7 +162,7 @@ export function BluetoothImportDialog({
     const data = parseJSONImport(manualInput.trim());
     
     if (!data) {
-      setError('Invalid JSON format or not a FarmDeck export');
+      setError('Invalid JSON format');
       setImportStatus('error');
       return;
     }
@@ -122,7 +179,7 @@ export function BluetoothImportDialog({
       if (data) {
         await handleParsedData(data);
       }
-    } catch (err) {
+    } catch {
       toast({ title: 'Failed to read clipboard', variant: 'destructive' });
     }
   };
@@ -140,7 +197,6 @@ export function BluetoothImportDialog({
         setImportStatus('success');
         toast({ title: result.message });
         
-        // Wait a moment then close
         setTimeout(() => {
           onOpenChange(false);
           onImportComplete();
@@ -158,13 +214,21 @@ export function BluetoothImportDialog({
     }
   };
 
+  const handleClose = (value: boolean) => {
+    if (!value) {
+      resetState();
+    }
+    onOpenChange(value);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) resetState(); }}>
+    <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="font-serif">Import Project</DialogTitle>
         </DialogHeader>
 
+        {/* Preview Screen */}
         {importStatus === 'preview' && parsedData && syncPreview && (
           <div className="space-y-4">
             <div className="bg-primary/10 rounded-lg p-4 space-y-3">
@@ -209,15 +273,14 @@ export function BluetoothImportDialog({
                 Cancel
               </Button>
               <Button onClick={handleImport} disabled={isImporting} className="flex-1">
-                {isImporting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : null}
+                {isImporting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Import
               </Button>
             </div>
           </div>
         )}
 
+        {/* Importing Screen */}
         {importStatus === 'importing' && (
           <div className="text-center py-8">
             <Loader2 className="h-12 w-12 mx-auto animate-spin text-primary" />
@@ -225,6 +288,7 @@ export function BluetoothImportDialog({
           </div>
         )}
 
+        {/* Success Screen */}
         {importStatus === 'success' && (
           <div className="text-center py-8">
             <CheckCircle2 className="h-12 w-12 mx-auto text-green-500" />
@@ -232,6 +296,7 @@ export function BluetoothImportDialog({
           </div>
         )}
 
+        {/* Error Screen */}
         {importStatus === 'error' && (
           <div className="space-y-4">
             <div className="text-center py-4">
@@ -244,6 +309,7 @@ export function BluetoothImportDialog({
           </div>
         )}
 
+        {/* Initial Screen with Tabs */}
         {importStatus === 'idle' && (
           <Tabs defaultValue="file" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
@@ -262,19 +328,66 @@ export function BluetoothImportDialog({
                 <div className="text-center p-4 text-muted-foreground">
                   <AlertCircle className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm">Bluetooth not available</p>
-                  <p className="text-xs mt-1">Use the File Import tab instead</p>
+                  <p className="text-xs mt-1">Use the File Import tab</p>
                 </div>
               ) : (
-                <div className="text-center p-4 space-y-4">
-                  <Bluetooth className="h-12 w-12 mx-auto text-primary opacity-70" />
-                  <p className="text-sm text-muted-foreground">
-                    Web Bluetooth has limited receiving capabilities.
-                    For reliable import, please use File Import.
-                  </p>
-                  <Button variant="outline" className="w-full" onClick={() => {}}>
-                    <Bluetooth className="h-4 w-4 mr-2" />
-                    Scan for Devices (Limited)
-                  </Button>
+                <div className="space-y-4">
+                  {/* Status Display */}
+                  <div className="text-center py-4">
+                    {btStatus === 'idle' && (
+                      <>
+                        <Smartphone className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                        <p className="text-sm text-muted-foreground">
+                          Connect to the sending device first
+                        </p>
+                      </>
+                    )}
+                    {btStatus === 'scanning' && (
+                      <>
+                        <Loader2 className="h-12 w-12 mx-auto text-primary animate-spin mb-3" />
+                        <p className="text-sm">Select a device...</p>
+                      </>
+                    )}
+                    {btStatus === 'connected' && connection && (
+                      <>
+                        <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-3" />
+                        <p className="font-medium">{connection.device.name || 'Connected'}</p>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Device connected. Use File Import to receive data.
+                        </p>
+                      </>
+                    )}
+                    {btStatus === 'error' && (
+                      <>
+                        <AlertCircle className="h-12 w-12 mx-auto text-destructive mb-3" />
+                        <p className="text-sm text-destructive">Connection failed</p>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="space-y-2">
+                    {(btStatus === 'idle' || btStatus === 'error') && (
+                      <Button onClick={handleScanAndConnect} className="w-full">
+                        <Bluetooth className="h-4 w-4 mr-2" />
+                        Scan for Devices
+                      </Button>
+                    )}
+
+                    {btStatus === 'connected' && (
+                      <Button onClick={handleDisconnect} variant="outline" className="w-full">
+                        <Unplug className="h-4 w-4 mr-2" />
+                        Disconnect
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground text-center">
+                      For reliable data transfer, have the sender share the file 
+                      via AirDrop, Nearby Share, or email, then import it below.
+                    </p>
+                  </div>
                 </div>
               )}
             </TabsContent>
