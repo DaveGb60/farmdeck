@@ -8,6 +8,7 @@ import { ProjectDetailsSection } from '@/components/ProjectDetailsSection';
 import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
 import { BluetoothImportDialog } from '@/components/BluetoothImportDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
+import { NotesEditor } from '@/components/NotesEditor';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -273,6 +274,11 @@ const Index = () => {
                 project={selectedProject}
                 onUpdateDetails={handleUpdateProjectDetails}
                 onCompleteProject={handleCompleteProject}
+              />
+              <NotesEditor
+                notes={selectedProject.details.notes || ''}
+                onChange={(notes) => handleUpdateProjectDetails({ ...selectedProject.details, notes })}
+                readOnly={selectedProject.isCompleted}
               />
               <MonthlySummary aggregations={aggregations} projectDetails={selectedProject.details} />
             </TabsContent>
