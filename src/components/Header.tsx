@@ -1,4 +1,4 @@
-import { Leaf, Menu, Trash2, Sun, Moon, Home, Phone, Mail, Heart, Banknote } from 'lucide-react';
+import { Leaf, Menu, Trash2, Sun, Moon, Home, Phone, Mail, Heart, Banknote, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useTheme } from '@/hooks/useTheme';
@@ -9,6 +9,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { toast } from 'sonner';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -40,23 +41,60 @@ export function Header({ onMenuClick }: HeaderProps) {
     </div>
   );
 
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copied to clipboard`);
+  };
+
   const DonateInfo = () => (
     <div className="space-y-3">
       <h4 className="font-medium text-sm text-foreground">Donate / Support</h4>
-      <div className="space-y-2 text-sm text-muted-foreground">
-        <div className="flex items-start gap-2">
-          <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium text-foreground">M-Pesa Till</p>
-            <p>3663466</p>
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-foreground">M-Pesa Till</p>
+              <p>3663466</p>
+            </div>
           </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            onClick={() => copyToClipboard('3663466', 'M-Pesa Till')}
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </Button>
         </div>
-        <div className="flex items-start gap-2">
-          <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium text-foreground">Bank</p>
-            <p>Till: 522522</p>
-            <p>A/C: 1318792959</p>
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium text-foreground">Bank</p>
+              <p>Till: 522522</p>
+              <p>A/C: 1318792959</p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              onClick={() => copyToClipboard('522522', 'Bank Till')}
+              title="Copy Till"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0"
+              onClick={() => copyToClipboard('1318792959', 'Account Number')}
+              title="Copy A/C"
+            >
+              <Copy className="h-3 w-3" />
+            </Button>
           </div>
         </div>
       </div>
