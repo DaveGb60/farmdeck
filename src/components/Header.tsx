@@ -1,9 +1,14 @@
-import { Leaf, Menu, Trash2, Sun, Moon, Home } from 'lucide-react';
+import { Leaf, Menu, Trash2, Sun, Moon, Home, Phone, Mail, Heart, Banknote } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useTheme } from '@/hooks/useTheme';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -18,6 +23,45 @@ export function Header({ onMenuClick }: HeaderProps) {
     { label: 'Projects', path: '/', icon: Home },
     { label: 'Trash', path: '/trash', icon: Trash2 },
   ];
+
+  const ContactInfo = () => (
+    <div className="space-y-3">
+      <h4 className="font-medium text-sm text-foreground">Contact</h4>
+      <div className="space-y-2 text-sm">
+        <a href="tel:0768974474" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+          <Phone className="h-4 w-4" />
+          0768974474
+        </a>
+        <a href="mailto:gfibionjoseph@gmail.com" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
+          <Mail className="h-4 w-4" />
+          gfibionjoseph@gmail.com
+        </a>
+      </div>
+    </div>
+  );
+
+  const DonateInfo = () => (
+    <div className="space-y-3">
+      <h4 className="font-medium text-sm text-foreground">Donate / Support</h4>
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <div className="flex items-start gap-2">
+          <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium text-foreground">M-Pesa Till</p>
+            <p>3663466</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2">
+          <Banknote className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium text-foreground">Bank</p>
+            <p>Till: 522522</p>
+            <p>A/C: 1318792959</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border bg-background/80 backdrop-blur-md">
@@ -53,6 +97,34 @@ export function Header({ onMenuClick }: HeaderProps) {
             </Button>
           ))}
           <div className="w-px h-6 bg-border mx-2" />
+          
+          {/* Contact Popover */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2">
+                <Phone className="h-4 w-4" />
+                Contact
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64">
+              <ContactInfo />
+            </PopoverContent>
+          </Popover>
+
+          {/* Donate Popover */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-2">
+                <Heart className="h-4 w-4" />
+                Support
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64">
+              <DonateInfo />
+            </PopoverContent>
+          </Popover>
+
+          <div className="w-px h-6 bg-border mx-2" />
           <Button
             variant="ghost"
             size="icon"
@@ -87,6 +159,21 @@ export function Header({ onMenuClick }: HeaderProps) {
                   {item.label}
                 </Button>
               ))}
+              
+              <div className="h-px bg-border my-4" />
+              
+              {/* Contact Section */}
+              <div className="px-3">
+                <ContactInfo />
+              </div>
+              
+              <div className="h-px bg-border my-4" />
+              
+              {/* Donate Section */}
+              <div className="px-3">
+                <DonateInfo />
+              </div>
+              
               <div className="h-px bg-border my-4" />
               <div className="flex items-center justify-between px-3">
                 <span className="text-sm text-muted-foreground">Theme</span>
