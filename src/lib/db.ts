@@ -16,6 +16,7 @@ export interface ProjectDetails {
   inputs: InputItem[];
   challengesSummary: string;
   customDetails: Record<string, string | number>;
+  notes?: string; // Project notes with formatting
 }
 
 export interface FarmProject {
