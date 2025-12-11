@@ -1,4 +1,4 @@
-import { Leaf, Menu, Trash2, Sun, Moon, Home, Phone, Mail, Heart, Banknote, Copy } from 'lucide-react';
+import { Leaf, Menu, Trash2, Sun, Moon, Home, Phone, Mail, Heart, Banknote, Copy, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { useTheme } from '@/hooks/useTheme';
@@ -32,6 +32,10 @@ export function Header({ onMenuClick }: HeaderProps) {
         <a href="tel:0768974474" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
           <Phone className="h-4 w-4" />
           0768974474
+        </a>
+        <a href="https://wa.me/254768974474" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-muted-foreground hover:text-green-600 transition-colors">
+          <MessageCircle className="h-4 w-4" />
+          WhatsApp
         </a>
         <a href="mailto:gfibionjoseph@gmail.com" className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
           <Mail className="h-4 w-4" />
