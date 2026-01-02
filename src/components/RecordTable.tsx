@@ -7,9 +7,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Plus, Trash2, Lock, ChevronDown, MessageSquare, Save, MoreVertical, Pencil } from 'lucide-react';
+import { Plus, Trash2, Lock, ChevronDown, MessageSquare, Save, MoreVertical, Pencil, DollarSign, Hash, Type } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { ColumnType } from '@/components/ColumnManagerDropdown';
 
 interface RecordTableProps {
   project: FarmProject;
@@ -18,6 +19,7 @@ interface RecordTableProps {
   onUpdateRecord: (record: FarmRecord) => void;
   onDeleteRecord: (id: string) => void;
   onLockRecord: (id: string) => void;
+  customColumnTypes?: Record<string, ColumnType>;
 }
 
 interface NewRecordState {
@@ -49,6 +51,7 @@ export function RecordTable({
   onUpdateRecord,
   onDeleteRecord,
   onLockRecord,
+  customColumnTypes = {},
 }: RecordTableProps) {
   const [newRecord, setNewRecord] = useState<NewRecordState>({
     date: new Date().toISOString().split('T')[0],
@@ -195,9 +198,22 @@ export function RecordTable({
                     <p className="text-xs">{fieldDefinitions.produceRevenue}</p>
                   </TooltipContent>
                 </Tooltip>
-                {customColumns.map((col) => (
-                  <TableHead key={col} className="text-right">{col}</TableHead>
-                ))}
+                {customColumns.map((col) => {
+                  const colType = customColumnTypes[col] || 'text';
+                  const isCashInflow = colType === 'cash_inflow';
+                  const isCashOutflow = colType === 'cash_outflow';
+                  return (
+                    <TableHead key={col} className="text-right">
+                      <span className="flex items-center justify-end gap-1">
+                        {isCashInflow && <DollarSign className="h-3 w-3 text-success" />}
+                        {isCashOutflow && <DollarSign className="h-3 w-3 text-destructive" />}
+                        {colType === 'number' && <Hash className="h-3 w-3 text-muted-foreground" />}
+                        {colType === 'text' && <Type className="h-3 w-3 text-muted-foreground" />}
+                        {col}
+                      </span>
+                    </TableHead>
+                  );
+                })}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <TableHead className="w-[50px] cursor-help">Comment</TableHead>
@@ -339,11 +355,31 @@ export function RecordTable({
                           `+${(record.produceRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
                         )}
                       </TableCell>
-                      {customColumns.map((col) => (
-                        <TableCell key={col} className="text-right tabular-nums">
-                          {record.customFields[col] || '-'}
-                        </TableCell>
-                      ))}
+                      {customColumns.map((col) => {
+                        const colType = customColumnTypes[col] || 'text';
+                        const value = record.customFields[col];
+                        const isCashInflow = colType === 'cash_inflow';
+                        const isCashOutflow = colType === 'cash_outflow';
+                        const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
+                        
+                        return (
+                          <TableCell 
+                            key={col} 
+                            className={cn(
+                              "text-right tabular-nums",
+                              isCashInflow && "text-success",
+                              isCashOutflow && "text-destructive"
+                            )}
+                          >
+                            {value === undefined || value === '' || value === null ? '-' : (
+                              isCashInflow ? `+${numValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}` :
+                              isCashOutflow ? `-${numValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}` :
+                              colType === 'number' ? numValue.toLocaleString() :
+                              String(value)
+                            )}
+                          </TableCell>
+                        );
+                      })}
                       <TableCell>
                         {record.comment && (
                           <CollapsibleTrigger asChild>
