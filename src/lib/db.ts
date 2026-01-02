@@ -19,6 +19,8 @@ export interface ProjectDetails {
   notes?: string; // Project notes with formatting
 }
 
+export type ColumnType = 'text' | 'number' | 'cash_inflow' | 'cash_outflow';
+
 export interface FarmProject {
   id: string;
   title: string;
@@ -26,6 +28,7 @@ export interface FarmProject {
   createdAt: string;
   updatedAt: string;
   customColumns: string[];
+  customColumnTypes: Record<string, ColumnType>;
   isCompleted: boolean;
   completedAt?: string;
   details: ProjectDetails;
@@ -128,6 +131,7 @@ export async function createProject(title: string, startDate: string, customColu
     createdAt: now,
     updatedAt: now,
     customColumns,
+    customColumnTypes: {},
     isCompleted: false,
     details: createDefaultProjectDetails(),
   };
@@ -142,6 +146,7 @@ export async function importProject(projectData: FarmProject): Promise<FarmProje
     ...projectData,
     // Ensure details exists (for backward compatibility)
     details: projectData.details || createDefaultProjectDetails(),
+    customColumnTypes: projectData.customColumnTypes || {},
     isCompleted: projectData.isCompleted || false,
     updatedAt: new Date().toISOString(),
   };
@@ -202,6 +207,7 @@ export async function getAllProjects(): Promise<FarmProject[]> {
       ...p,
       isCompleted: p.isCompleted ?? false,
       details: p.details ?? createDefaultProjectDetails(),
+      customColumnTypes: p.customColumnTypes ?? {},
     }));
 }
 
@@ -215,6 +221,7 @@ export async function getDeletedProjects(): Promise<FarmProject[]> {
       ...p,
       isCompleted: p.isCompleted ?? false,
       details: p.details ?? createDefaultProjectDetails(),
+      customColumnTypes: p.customColumnTypes ?? {},
     }))
     .sort((a, b) => new Date(b.deletedAt!).getTime() - new Date(a.deletedAt!).getTime());
 }
@@ -228,6 +235,7 @@ export async function getProject(id: string): Promise<FarmProject | undefined> {
     ...project,
     isCompleted: project.isCompleted ?? false,
     details: project.details ?? createDefaultProjectDetails(),
+    customColumnTypes: project.customColumnTypes ?? {},
   };
 }
 

@@ -29,8 +29,9 @@ import {
 } from '@/components/ui/select';
 import { Settings2, Plus, Check, X, Type, Hash, DollarSign } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ColumnType } from '@/lib/db';
 
-export type ColumnType = 'text' | 'number' | 'cash_inflow' | 'cash_outflow';
+export type { ColumnType } from '@/lib/db';
 
 export interface CustomColumn {
   name: string;

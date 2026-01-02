@@ -134,6 +134,8 @@ const Index = () => {
     const project = await getProject(id);
     if (project) {
       setSelectedProject(project);
+      // Load custom column types from project
+      setCustomColumnTypes(project.customColumnTypes || {});
     }
   };
 
@@ -228,10 +230,11 @@ const Index = () => {
     if (!selectedProject) return;
     try {
       const newColumns = [...selectedProject.customColumns, column.name];
-      const updatedProject = { ...selectedProject, customColumns: newColumns };
+      const newColumnTypes = { ...selectedProject.customColumnTypes, [column.name]: column.type };
+      const updatedProject = { ...selectedProject, customColumns: newColumns, customColumnTypes: newColumnTypes };
       await updateProject(updatedProject);
       setSelectedProject(updatedProject);
-      setCustomColumnTypes({ ...customColumnTypes, [column.name]: column.type });
+      setCustomColumnTypes(newColumnTypes);
       toast({ title: `Column "${column.name}" added` });
     } catch (error) {
       toast({ title: 'Error adding column', variant: 'destructive' });
@@ -242,12 +245,12 @@ const Index = () => {
     if (!selectedProject) return;
     try {
       const newColumns = selectedProject.customColumns.filter(c => c !== columnName);
-      const updatedProject = { ...selectedProject, customColumns: newColumns };
+      const newColumnTypes = { ...selectedProject.customColumnTypes };
+      delete newColumnTypes[columnName];
+      const updatedProject = { ...selectedProject, customColumns: newColumns, customColumnTypes: newColumnTypes };
       await updateProject(updatedProject);
       setSelectedProject(updatedProject);
-      const newTypes = { ...customColumnTypes };
-      delete newTypes[columnName];
-      setCustomColumnTypes(newTypes);
+      setCustomColumnTypes(newColumnTypes);
       toast({ title: `Column "${columnName}" removed` });
     } catch (error) {
       toast({ title: 'Error removing column', variant: 'destructive' });
