@@ -1,18 +1,20 @@
 import { MonthlyAggregation, ProjectDetails, calculateTotalProjectCosts } from '@/lib/db';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { TrendingUp, TrendingDown, Minus, Calendar, FileText } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Calendar, FileText, Target } from 'lucide-react';
 import { format, parse } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface MonthlySummaryProps {
   aggregations: MonthlyAggregation[];
   projectDetails?: ProjectDetails;
+  isCompleted?: boolean;
 }
 
-export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryProps) {
+export function MonthlySummary({ aggregations, projectDetails, isCompleted = false }: MonthlySummaryProps) {
   // Calculate total project costs for display
   const totalProjectCosts = projectDetails ? calculateTotalProjectCosts(projectDetails) : 0;
   const capital = projectDetails?.capital || 0;
+  const projectedRevenue = projectDetails?.estimatedRevenue || 0;
   
   if (aggregations.length === 0) {
     return (
@@ -30,6 +32,12 @@ export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryP
   const totalRevenue = aggregations.reduce((sum, agg) => sum + agg.totalRevenue, 0);
   const totalCostsWithCapital = totalProjectCosts + capital;
   const overallProfit = totalRevenue - totalCostsWithCapital;
+  
+  // Calculate Projected P/L and Surplus/Deficit
+  const projectedPL = projectedRevenue - totalCostsWithCapital;
+  const surplusDeficit = overallProfit - projectedPL; // Positive = Surplus, Negative = Deficit
+  const isSurplus = surplusDeficit > 0;
+  const isDeficit = surplusDeficit < 0;
 
   return (
     <div className="space-y-4">
@@ -43,7 +51,7 @@ export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryP
         <CardHeader className="pb-2">
           <CardTitle className="text-base font-serif">Project Summary</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div>
               <p className="text-muted-foreground text-xs">Total Revenue</p>
@@ -59,7 +67,7 @@ export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryP
               <p className="text-[10px] text-muted-foreground">(Inputs + Costs + Capital)</p>
             </div>
             <div>
-              <p className="text-muted-foreground text-xs">Realized Profit/Loss</p>
+              <p className="text-muted-foreground text-xs">Realized P/L</p>
               <div className={cn(
                 "flex items-center gap-1 font-bold tabular-nums",
                 overallProfit > 0 && "text-success",
@@ -80,6 +88,57 @@ export function MonthlySummary({ aggregations, projectDetails }: MonthlySummaryP
               </p>
             </div>
           </div>
+
+          {/* Surplus/Deficit Section - Shows when project is completed or has projected revenue */}
+          {(isCompleted || projectedRevenue > 0) && (
+            <div className="pt-3 border-t border-border">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                <div>
+                  <p className="text-muted-foreground text-xs flex items-center gap-1">
+                    <Target className="h-3 w-3" />
+                    Projected P/L
+                  </p>
+                  <p className={cn(
+                    "font-semibold tabular-nums",
+                    projectedPL > 0 && "text-success",
+                    projectedPL < 0 && "text-destructive"
+                  )}>
+                    {projectedPL > 0 ? '+' : ''}{projectedPL.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground text-xs">Realized P/L</p>
+                  <p className={cn(
+                    "font-semibold tabular-nums",
+                    overallProfit > 0 && "text-success",
+                    overallProfit < 0 && "text-destructive"
+                  )}>
+                    {overallProfit > 0 ? '+' : ''}{overallProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="col-span-2 md:col-span-1">
+                  <p className="text-muted-foreground text-xs">
+                    {isSurplus ? 'Surplus' : isDeficit ? 'Deficit' : 'On Target'}
+                  </p>
+                  <div className={cn(
+                    "flex items-center gap-1 font-bold tabular-nums",
+                    isSurplus && "text-success",
+                    isDeficit && "text-destructive"
+                  )}>
+                    {isSurplus && <TrendingUp className="h-4 w-4" />}
+                    {isDeficit && <TrendingDown className="h-4 w-4" />}
+                    {!isSurplus && !isDeficit && <Minus className="h-4 w-4" />}
+                    <span>
+                      {isSurplus ? '+' : ''}{surplusDeficit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    (Realized P/L - Projected P/L)
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
       

@@ -9,6 +9,7 @@ import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
 import { BluetoothImportDialog } from '@/components/BluetoothImportDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { NotesEditor } from '@/components/NotesEditor';
+import { ColumnManagerDropdown, CustomColumn, ColumnType } from '@/components/ColumnManagerDropdown';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -38,6 +39,7 @@ import {
   getMonthlyAggregation,
   updateProjectDetails,
   completeProject,
+  updateProject,
 } from '@/lib/db';
 import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -55,6 +57,7 @@ const Index = () => {
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isPDFExportOpen, setIsPDFExportOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<'details' | 'components'>('details');
+  const [customColumnTypes, setCustomColumnTypes] = useState<Record<string, ColumnType>>({});
   const { toast } = useToast();
 
   // Load projects
@@ -221,7 +224,35 @@ const Index = () => {
     }
   };
 
-  // Project Detail View
+  const handleAddColumn = async (column: CustomColumn) => {
+    if (!selectedProject) return;
+    try {
+      const newColumns = [...selectedProject.customColumns, column.name];
+      const updatedProject = { ...selectedProject, customColumns: newColumns };
+      await updateProject(updatedProject);
+      setSelectedProject(updatedProject);
+      setCustomColumnTypes({ ...customColumnTypes, [column.name]: column.type });
+      toast({ title: `Column "${column.name}" added` });
+    } catch (error) {
+      toast({ title: 'Error adding column', variant: 'destructive' });
+    }
+  };
+
+  const handleRemoveColumn = async (columnName: string) => {
+    if (!selectedProject) return;
+    try {
+      const newColumns = selectedProject.customColumns.filter(c => c !== columnName);
+      const updatedProject = { ...selectedProject, customColumns: newColumns };
+      await updateProject(updatedProject);
+      setSelectedProject(updatedProject);
+      const newTypes = { ...customColumnTypes };
+      delete newTypes[columnName];
+      setCustomColumnTypes(newTypes);
+      toast({ title: `Column "${columnName}" removed` });
+    } catch (error) {
+      toast({ title: 'Error removing column', variant: 'destructive' });
+    }
+  };
   if (selectedProject) {
     return (
       <div className="min-h-screen bg-gradient-earth">
@@ -280,17 +311,30 @@ const Index = () => {
                 onChange={(notes) => handleUpdateProjectDetails({ ...selectedProject.details, notes })}
                 readOnly={selectedProject.isCompleted}
               />
-              <MonthlySummary aggregations={aggregations} projectDetails={selectedProject.details} />
+              <MonthlySummary 
+                aggregations={aggregations} 
+                projectDetails={selectedProject.details} 
+                isCompleted={selectedProject.isCompleted}
+              />
             </TabsContent>
 
             {/* Section 2: Project Records */}
             <TabsContent value="components" className="space-y-6 mt-6">
               <div>
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
                   <h3 className="font-serif text-lg font-semibold">Project Records</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {records.filter(r => r.isLocked).length}/{records.length} locked
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <ColumnManagerDropdown
+                      columns={selectedProject.customColumns}
+                      customColumnTypes={customColumnTypes}
+                      onAddColumn={handleAddColumn}
+                      onRemoveColumn={handleRemoveColumn}
+                      disabled={selectedProject.isCompleted}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      {records.filter(r => r.isLocked).length}/{records.length} locked
+                    </p>
+                  </div>
                 </div>
                 <RecordTable
                   project={selectedProject}
@@ -299,6 +343,7 @@ const Index = () => {
                   onUpdateRecord={handleUpdateRecord}
                   onDeleteRecord={handleDeleteRecord}
                   onLockRecord={handleLockRecord}
+                  customColumnTypes={customColumnTypes}
                 />
               </div>
             </TabsContent>
