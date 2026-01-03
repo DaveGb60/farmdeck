@@ -256,6 +256,17 @@ const Index = () => {
       toast({ title: 'Error removing column', variant: 'destructive' });
     }
   };
+
+  const handleReorderColumns = async (newColumns: string[]) => {
+    if (!selectedProject) return;
+    try {
+      const updatedProject = { ...selectedProject, customColumns: newColumns };
+      await updateProject(updatedProject);
+      setSelectedProject(updatedProject);
+    } catch (error) {
+      toast({ title: 'Error reordering columns', variant: 'destructive' });
+    }
+  };
   if (selectedProject) {
     return (
       <div className="min-h-screen bg-gradient-earth">
@@ -332,6 +343,7 @@ const Index = () => {
                       customColumnTypes={customColumnTypes}
                       onAddColumn={handleAddColumn}
                       onRemoveColumn={handleRemoveColumn}
+                      onReorderColumns={handleReorderColumns}
                       disabled={selectedProject.isCompleted}
                     />
                     <p className="text-sm text-muted-foreground">

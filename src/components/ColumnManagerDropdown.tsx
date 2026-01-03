@@ -28,7 +28,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings2, Plus, Check, X, Type, Hash, DollarSign, Info } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Settings2, Plus, Check, X, Type, Hash, DollarSign, Info, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ColumnType } from '@/lib/db';
 
@@ -44,7 +47,63 @@ interface ColumnManagerDropdownProps {
   customColumnTypes?: Record<string, ColumnType>;
   onAddColumn: (column: CustomColumn) => void;
   onRemoveColumn: (columnName: string) => void;
+  onReorderColumns?: (newColumns: string[]) => void;
   disabled?: boolean;
+}
+
+// Sortable column item component
+interface SortableColumnItemProps {
+  id: string;
+  columnName: string;
+  typeIcon: React.ReactNode;
+  onRemove: () => void;
+}
+
+function SortableColumnItem({ id, columnName, typeIcon, onRemove }: SortableColumnItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "flex items-center justify-between px-2 py-1.5 rounded-md",
+        isDragging && "opacity-50 bg-accent"
+      )}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          {...attributes}
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing touch-none p-0.5 hover:bg-muted rounded"
+        >
+          <GripVertical className="h-3 w-3 text-muted-foreground" />
+        </button>
+        {typeIcon}
+        <span className="text-sm">{columnName}</span>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6 text-muted-foreground hover:text-destructive"
+        onClick={onRemove}
+      >
+        <X className="h-3 w-3" />
+      </Button>
+    </div>
+  );
 }
 
 // Pre-provided column options with descriptions for long-press
@@ -99,6 +158,7 @@ export function ColumnManagerDropdown({
   customColumnTypes = {},
   onAddColumn,
   onRemoveColumn,
+  onReorderColumns,
   disabled = false,
 }: ColumnManagerDropdownProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -106,6 +166,29 @@ export function ColumnManagerDropdown({
   const [newColumnType, setNewColumnType] = useState<ColumnType>('text');
   const [descriptionDialog, setDescriptionDialog] = useState<{ title: string; description: string } | null>(null);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    
+    if (over && active.id !== over.id) {
+      const oldIndex = columns.indexOf(active.id as string);
+      const newIndex = columns.indexOf(over.id as string);
+      const newOrder = arrayMove(columns, oldIndex, newIndex);
+      onReorderColumns?.(newOrder);
+    }
+  };
 
   const handleLongPressStart = useCallback((title: string, description: string) => {
     longPressTimer.current = setTimeout(() => {
@@ -209,27 +292,29 @@ export function ColumnManagerDropdown({
           {columns.length > 0 && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs text-muted-foreground">Active Columns</DropdownMenuLabel>
-              {columns.map((col) => (
-                <DropdownMenuItem
-                  key={col}
-                  className="flex items-center justify-between"
-                  onSelect={(e) => e.preventDefault()}
+              <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center gap-2">
+                Active Columns
+                <span className="text-[10px] font-normal">(drag to reorder)</span>
+              </DropdownMenuLabel>
+              <div className="px-1">
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleDragEnd}
                 >
-                  <div className="flex items-center gap-2">
-                    {getColumnTypeIcon(col)}
-                    <span>{col}</span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                    onClick={() => onRemoveColumn(col)}
-                  >
-                    <X className="h-3 w-3" />
-                  </Button>
-                </DropdownMenuItem>
-              ))}
+                  <SortableContext items={columns} strategy={verticalListSortingStrategy}>
+                    {columns.map((col) => (
+                      <SortableColumnItem
+                        key={col}
+                        id={col}
+                        columnName={col}
+                        typeIcon={getColumnTypeIcon(col)}
+                        onRemove={() => onRemoveColumn(col)}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
+              </div>
             </>
           )}
         </DropdownMenuContent>
