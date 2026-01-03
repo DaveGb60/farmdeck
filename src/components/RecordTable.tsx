@@ -34,15 +34,16 @@ interface NewRecordState {
 // Field definitions for long-press tooltips
 const fieldDefinitions: Record<string, string> = {
   date: "The date when this record entry was made or when the activity occurred",
-  item: "Optional: Specify the product type if your project has multiple outputs (e.g., milk, manure, beef for a cow project)",
-  produce: "The quantity or amount produced/harvested in this entry",
-  produceRevenue: "The income earned from selling the produce in this entry",
+  itemType: "Specify the product type for projects with multiple outputs (e.g., milk, beef, manure, calves in dairy farming)",
+  quantity: "The quantity or amount produced/harvested in this entry",
+  revenue: "The gross income earned from selling the produce. Cash columns (inflow/outflow) are applied to calculate net revenue",
   comment: "Additional notes, specifications, or details about this entry",
   lock: "Check to lock this entry. Once locked, it cannot be edited or deleted",
+  netRevenue: "Revenue after applying cash inflows and outflows from custom columns. This value is forwarded to project calculations",
 };
 
-// Check if Item column should show (user has added it to custom columns)
-const hasItemColumn = (project: FarmProject) => project.customColumns.includes('Item');
+// Check if Item Type column should show (user has added it to custom columns)
+const hasItemTypeColumn = (project: FarmProject) => project.customColumns.includes('Item Type');
 
 export function RecordTable({
   project,
@@ -65,9 +66,28 @@ export function RecordTable({
   const [editingRecord, setEditingRecord] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<FarmRecord>>({});
 
-  const showItemColumn = hasItemColumn(project);
-  // Filter out 'Item' from custom columns since it's handled separately
-  const customColumns = project.customColumns.filter(col => col !== 'Item');
+  const showItemTypeColumn = hasItemTypeColumn(project);
+  // Filter out 'Item Type' from custom columns since it's handled separately
+  const customColumns = project.customColumns.filter(col => col !== 'Item Type');
+  
+  // Calculate net revenue for a record (apply cash inflows/outflows)
+  const calculateNetRevenue = (record: FarmRecord) => {
+    let netRevenue = record.produceRevenue || 0;
+    
+    for (const col of customColumns) {
+      const colType = customColumnTypes[col];
+      const value = record.customFields[col];
+      const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
+      
+      if (colType === 'cash_inflow') {
+        netRevenue += numValue;
+      } else if (colType === 'cash_outflow') {
+        netRevenue -= numValue;
+      }
+    }
+    
+    return netRevenue;
+  };
 
   const toggleComment = (id: string) => {
     const newExpanded = new Set(expandedComments);
@@ -88,7 +108,7 @@ export function RecordTable({
 
     onAddRecord({
       date: newRecord.date,
-      item: showItemColumn ? newRecord.item.trim() : undefined,
+      item: showItemTypeColumn ? newRecord.item.trim() : undefined,
       produceAmount: parseFloat(newRecord.produceAmount) || 0,
       produceRevenue: parseFloat(newRecord.produceRevenue) || 0,
       comment: newRecord.comment.trim(),
@@ -155,7 +175,7 @@ export function RecordTable({
     );
   };
 
-  const colSpan = 4 + (showItemColumn ? 1 : 0) + customColumns.length;
+  const colSpan = 4 + (showItemTypeColumn ? 1 : 0) + customColumns.length;
 
   return (
     <TooltipProvider delayDuration={500}>
@@ -172,30 +192,30 @@ export function RecordTable({
                     <p className="text-xs">{fieldDefinitions.date}</p>
                   </TooltipContent>
                 </Tooltip>
-                {showItemColumn && (
+                {showItemTypeColumn && (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <TableHead className="cursor-help">Item</TableHead>
+                      <TableHead className="cursor-help">Item Type</TableHead>
                     </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-[200px]">
-                      <p className="text-xs">{fieldDefinitions.item}</p>
+                    <TooltipContent side="top" className="max-w-[250px]">
+                      <p className="text-xs">{fieldDefinitions.itemType}</p>
                     </TooltipContent>
                   </Tooltip>
                 )}
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <TableHead className="text-right cursor-help">Produce</TableHead>
+                    <TableHead className="text-right cursor-help">Quantity</TableHead>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-[200px]">
-                    <p className="text-xs">{fieldDefinitions.produce}</p>
+                    <p className="text-xs">{fieldDefinitions.quantity}</p>
                   </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <TableHead className="text-right cursor-help">Revenue</TableHead>
+                    <TableHead className="text-right cursor-help">Gross Revenue</TableHead>
                   </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[200px]">
-                    <p className="text-xs">{fieldDefinitions.produceRevenue}</p>
+                  <TooltipContent side="top" className="max-w-[250px]">
+                    <p className="text-xs">{fieldDefinitions.revenue}</p>
                   </TooltipContent>
                 </Tooltip>
                 {customColumns.map((col) => {
@@ -244,10 +264,10 @@ export function RecordTable({
                     className="h-8 text-sm bg-background"
                   />
                 </TableCell>
-                {showItemColumn && (
+                {showItemTypeColumn && (
                   <TableCell>
                     <Input
-                      placeholder="Item..."
+                      placeholder="Item type..."
                       value={newRecord.item}
                       onChange={(e) => setNewRecord({ ...newRecord, item: e.target.value })}
                       className="h-8 text-sm bg-background"
@@ -314,7 +334,7 @@ export function RecordTable({
                       <TableCell className="font-mono text-sm">
                         {format(new Date(record.date), 'MMM d')}
                       </TableCell>
-                      {showItemColumn && (
+                      {showItemTypeColumn && (
                         <TableCell className="font-medium">
                           {editingRecord === record.id ? (
                             <Input
