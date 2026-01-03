@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
+  DialogDescription,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -27,7 +28,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings2, Plus, Check, X, Type, Hash, DollarSign } from 'lucide-react';
+import { Settings2, Plus, Check, X, Type, Hash, DollarSign, Info } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ColumnType } from '@/lib/db';
 
@@ -46,17 +47,45 @@ interface ColumnManagerDropdownProps {
   disabled?: boolean;
 }
 
-// Pre-provided column options
-const preProvidedColumns: CustomColumn[] = [
-  { name: 'Item', type: 'text' },
-  { name: 'Weather', type: 'text' },
-  { name: 'Workers', type: 'number' },
-  { name: 'Labour Cost', type: 'cash_outflow' },
-  { name: 'Transport Cost', type: 'cash_outflow' },
-  { name: 'Other Income', type: 'cash_inflow' },
-  { name: 'Quantity', type: 'number' },
-  { name: 'Unit Price', type: 'number' },
+// Pre-provided column options with descriptions for long-press
+const preProvidedColumns: { column: CustomColumn; description: string }[] = [
+  { 
+    column: { name: 'Item Type', type: 'text' }, 
+    description: 'Specify the product type for projects with multiple outputs (e.g., milk, beef, manure, calves in dairy farming)' 
+  },
+  { 
+    column: { name: 'Weather', type: 'text' }, 
+    description: 'Record weather conditions that may affect production (e.g., sunny, rainy, cold)' 
+  },
+  { 
+    column: { name: 'Workers', type: 'number' }, 
+    description: 'Number of workers involved in the activity for this record' 
+  },
+  { 
+    column: { name: 'Labour Cost', type: 'cash_outflow' }, 
+    description: 'Cost of labor for this record. Subtracts from the record\'s net revenue before project calculations' 
+  },
+  { 
+    column: { name: 'Transport Cost', type: 'cash_outflow' }, 
+    description: 'Transportation expenses for this record. Subtracts from the record\'s net revenue before project calculations' 
+  },
+  { 
+    column: { name: 'Other Income', type: 'cash_inflow' }, 
+    description: 'Additional income for this record (tips, bonuses, etc.). Adds to the record\'s net revenue before project calculations' 
+  },
+  { 
+    column: { name: 'Unit Price', type: 'number' }, 
+    description: 'Price per unit of produce for reference calculations' 
+  },
 ];
+
+// Column type descriptions for long-press tooltips
+const columnTypeDescriptions: Record<ColumnType, string> = {
+  text: 'Text fields store words or descriptions and are not included in calculations',
+  number: 'Number fields store numeric values for tracking but are not included in P/L calculations',
+  cash_inflow: 'Cash inflow values are added to the record\'s revenue before forwarding to project calculations',
+  cash_outflow: 'Cash outflow values are subtracted from the record\'s revenue before forwarding to project calculations',
+};
 
 const columnTypeLabels: Record<ColumnType, { label: string; icon: typeof Type; description: string }> = {
   text: { label: 'Text', icon: Type, description: 'Words or descriptions' },
@@ -75,6 +104,21 @@ export function ColumnManagerDropdown({
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [newColumnName, setNewColumnName] = useState('');
   const [newColumnType, setNewColumnType] = useState<ColumnType>('text');
+  const [descriptionDialog, setDescriptionDialog] = useState<{ title: string; description: string } | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleLongPressStart = useCallback((title: string, description: string) => {
+    longPressTimer.current = setTimeout(() => {
+      setDescriptionDialog({ title, description });
+    }, 500); // 500ms long press
+  }, []);
+
+  const handleLongPressEnd = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
 
   const handleAddPreProvided = (column: CustomColumn) => {
     if (!columns.includes(column.name)) {
@@ -125,8 +169,9 @@ export function ColumnManagerDropdown({
               <Plus className="h-4 w-4 mr-2" />
               Add Pre-defined Column
             </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="bg-popover">
-              {preProvidedColumns.map((col) => {
+            <DropdownMenuSubContent className="bg-popover w-64">
+              <p className="px-2 py-1 text-xs text-muted-foreground">Long-press for description</p>
+              {preProvidedColumns.map(({ column: col, description }) => {
                 const isAdded = columns.includes(col.name);
                 const TypeIcon = columnTypeLabels[col.type].icon;
                 return (
@@ -134,7 +179,12 @@ export function ColumnManagerDropdown({
                     key={col.name}
                     onClick={() => !isAdded && handleAddPreProvided(col)}
                     disabled={isAdded}
-                    className="flex items-center justify-between"
+                    className="flex items-center justify-between cursor-pointer"
+                    onMouseDown={() => handleLongPressStart(col.name, description)}
+                    onMouseUp={handleLongPressEnd}
+                    onMouseLeave={handleLongPressEnd}
+                    onTouchStart={() => handleLongPressStart(col.name, description)}
+                    onTouchEnd={handleLongPressEnd}
                   >
                     <div className="flex items-center gap-2">
                       <TypeIcon className={cn(
@@ -251,6 +301,26 @@ export function ColumnManagerDropdown({
               disabled={!newColumnName.trim() || columns.includes(newColumnName.trim())}
             >
               Add Column
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Description Dialog for Long Press */}
+      <Dialog open={!!descriptionDialog} onOpenChange={() => setDescriptionDialog(null)}>
+        <DialogContent className="sm:max-w-md bg-card">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-xl flex items-center gap-2">
+              <Info className="h-5 w-5 text-primary" />
+              {descriptionDialog?.title}
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              {descriptionDialog?.description}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDescriptionDialog(null)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

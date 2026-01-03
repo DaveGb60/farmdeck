@@ -361,13 +361,38 @@ export function calculateTotalProjectCosts(details: ProjectDetails): number {
   return inputsCost + (details.costs || 0);
 }
 
-export async function getMonthlyAggregation(projectId: string, projectDetails?: ProjectDetails): Promise<MonthlyAggregation[]> {
+export async function getMonthlyAggregation(
+  projectId: string, 
+  projectDetails?: ProjectDetails,
+  customColumnTypes?: Record<string, ColumnType>
+): Promise<MonthlyAggregation[]> {
   const records = await getRecordsByProject(projectId);
   const monthlyData: Record<string, MonthlyAggregation> = {};
 
   // Calculate total project-level costs (to be distributed across months)
   const totalProjectCosts = projectDetails ? calculateTotalProjectCosts(projectDetails) : 0;
   const capital = projectDetails?.capital || 0;
+
+  // Helper to calculate net revenue for a record (apply cash inflows/outflows)
+  const calculateNetRevenue = (record: FarmRecord) => {
+    let netRevenue = record.produceRevenue || 0;
+    
+    if (customColumnTypes) {
+      for (const col in record.customFields) {
+        const colType = customColumnTypes[col];
+        const value = record.customFields[col];
+        const numValue = typeof value === 'number' ? value : parseFloat(value as string) || 0;
+        
+        if (colType === 'cash_inflow') {
+          netRevenue += numValue;
+        } else if (colType === 'cash_outflow') {
+          netRevenue -= numValue;
+        }
+      }
+    }
+    
+    return netRevenue;
+  };
 
   for (const record of records) {
     const month = getMonthFromDate(record.date);
@@ -384,7 +409,8 @@ export async function getMonthlyAggregation(projectId: string, projectDetails?: 
       };
     }
     monthlyData[month].totalProduceAmount += record.produceAmount || 0;
-    monthlyData[month].totalRevenue += record.produceRevenue || 0;
+    // Use net revenue (after applying cash inflows/outflows from custom columns)
+    monthlyData[month].totalRevenue += calculateNetRevenue(record);
     monthlyData[month].recordCount += 1;
   }
 
