@@ -5,13 +5,23 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 export interface InputItem {
   name: string;
   cost: number;
+  date?: string; // YYYY-MM-DD - when this cost was incurred
+}
+
+// Cost entry with timestamp
+export interface CostEntry {
+  amount: number;
+  date: string; // YYYY-MM-DD - when this cost was incurred
+  description?: string;
 }
 
 // Project Details (Section 1) - editable until project is completed
 export interface ProjectDetails {
   capital: number;
+  capitalDate?: string; // YYYY-MM-DD - when capital was invested
   totalItemCount: number;
   costs: number;
+  costsDate?: string; // YYYY-MM-DD - when general costs were incurred
   estimatedRevenue: number;
   inputs: InputItem[];
   challengesSummary: string;
@@ -369,11 +379,8 @@ export async function getMonthlyAggregation(
   const records = await getRecordsByProject(projectId);
   const monthlyData: Record<string, MonthlyAggregation> = {};
 
-  // Calculate total project-level costs (to be distributed across months)
-  const totalProjectCosts = projectDetails ? calculateTotalProjectCosts(projectDetails) : 0;
-  const capital = projectDetails?.capital || 0;
-
   // Helper to calculate net revenue for a record (apply cash inflows/outflows)
+  // Records already have precalculated revenue with cash flows from the records environment
   const calculateNetRevenue = (record: FarmRecord) => {
     let netRevenue = record.produceRevenue || 0;
     
@@ -394,36 +401,107 @@ export async function getMonthlyAggregation(
     return netRevenue;
   };
 
+  // First pass: aggregate record data by month
   for (const record of records) {
     const month = getMonthFromDate(record.date);
     if (!monthlyData[month]) {
       monthlyData[month] = {
         month,
         projectId,
-        totalInputCost: 0,
+        totalInputCost: 0, // Will hold month-specific costs
         totalProduceAmount: 0,
-        totalRevenue: 0,
+        totalRevenue: 0, // This is net revenue from records (already includes cash flows)
         grossProfit: 0,
         netProfit: 0,
         recordCount: 0,
       };
     }
     monthlyData[month].totalProduceAmount += record.produceAmount || 0;
-    // Use net revenue (after applying cash inflows/outflows from custom columns)
+    // Revenue already includes cash inflows/outflows from record-level custom columns
     monthlyData[month].totalRevenue += calculateNetRevenue(record);
     monthlyData[month].recordCount += 1;
   }
 
-  const monthCount = Object.keys(monthlyData).length;
-  const costPerMonth = monthCount > 0 ? totalProjectCosts / monthCount : 0;
-  const capitalPerMonth = monthCount > 0 ? capital / monthCount : 0;
+  // Second pass: add project-level costs to their specific months
+  if (projectDetails) {
+    // Add capital to its specific month (or first month if not specified)
+    if (projectDetails.capital > 0) {
+      const capitalMonth = projectDetails.capitalDate 
+        ? getMonthFromDate(projectDetails.capitalDate)
+        : Object.keys(monthlyData).sort()[0]; // First month as fallback
+      
+      if (capitalMonth && monthlyData[capitalMonth]) {
+        monthlyData[capitalMonth].totalInputCost += projectDetails.capital;
+      } else if (capitalMonth) {
+        // Create month entry if it doesn't exist
+        monthlyData[capitalMonth] = {
+          month: capitalMonth,
+          projectId,
+          totalInputCost: projectDetails.capital,
+          totalProduceAmount: 0,
+          totalRevenue: 0,
+          grossProfit: 0,
+          netProfit: 0,
+          recordCount: 0,
+        };
+      }
+    }
 
-  // Calculate profits with distributed costs
+    // Add general costs to their specific month
+    if (projectDetails.costs > 0) {
+      const costsMonth = projectDetails.costsDate 
+        ? getMonthFromDate(projectDetails.costsDate)
+        : Object.keys(monthlyData).sort()[0]; // First month as fallback
+      
+      if (costsMonth && monthlyData[costsMonth]) {
+        monthlyData[costsMonth].totalInputCost += projectDetails.costs;
+      } else if (costsMonth) {
+        monthlyData[costsMonth] = {
+          month: costsMonth,
+          projectId,
+          totalInputCost: projectDetails.costs,
+          totalProduceAmount: 0,
+          totalRevenue: 0,
+          grossProfit: 0,
+          netProfit: 0,
+          recordCount: 0,
+        };
+      }
+    }
+
+    // Add input costs to their specific months
+    for (const input of projectDetails.inputs || []) {
+      if (input.cost > 0) {
+        const inputMonth = input.date 
+          ? getMonthFromDate(input.date)
+          : Object.keys(monthlyData).sort()[0]; // First month as fallback
+        
+        if (inputMonth && monthlyData[inputMonth]) {
+          monthlyData[inputMonth].totalInputCost += input.cost;
+        } else if (inputMonth) {
+          monthlyData[inputMonth] = {
+            month: inputMonth,
+            projectId,
+            totalInputCost: input.cost,
+            totalProduceAmount: 0,
+            totalRevenue: 0,
+            grossProfit: 0,
+            netProfit: 0,
+            recordCount: 0,
+          };
+        }
+      }
+    }
+  }
+
+  // Third pass: calculate profits (month-specific, no carry-over)
   for (const month in monthlyData) {
-    monthlyData[month].totalInputCost = costPerMonth;
-    monthlyData[month].grossProfit = monthlyData[month].totalRevenue;
-    // Net profit = Revenue - Costs - Capital (all distributed per month)
-    monthlyData[month].netProfit = monthlyData[month].totalRevenue - costPerMonth - capitalPerMonth;
+    const data = monthlyData[month];
+    // Gross profit = revenue from records (already net of record-level cash flows)
+    data.grossProfit = data.totalRevenue;
+    // Net profit = Gross profit - Month-specific project costs
+    // Each month stands alone, no costs carried from other months
+    data.netProfit = data.totalRevenue - data.totalInputCost;
   }
 
   return Object.values(monthlyData).sort((a, b) => b.month.localeCompare(a.month));

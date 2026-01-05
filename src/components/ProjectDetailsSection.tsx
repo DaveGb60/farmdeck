@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Save, Lock, DollarSign, Package, TrendingUp, Plus, X, ShoppingCart, Coins } from 'lucide-react';
+import { Save, Lock, DollarSign, Package, TrendingUp, Plus, X, ShoppingCart, Coins, Calendar } from 'lucide-react';
+import { format as formatDate } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 interface ProjectDetailsSectionProps {
@@ -36,6 +37,7 @@ export function ProjectDetailsSection({
   const [newFieldKey, setNewFieldKey] = useState('');
   const [newInputName, setNewInputName] = useState('');
   const [newInputCost, setNewInputCost] = useState('');
+  const [newInputDate, setNewInputDate] = useState('');
 
   const handleSave = () => {
     onUpdateDetails(editData);
@@ -65,6 +67,7 @@ export function ProjectDetailsSection({
     const newInput: InputItem = {
       name: newInputName.trim(),
       cost: parseFloat(newInputCost) || 0,
+      date: newInputDate || undefined,
     };
     setEditData({
       ...editData,
@@ -72,6 +75,13 @@ export function ProjectDetailsSection({
     });
     setNewInputName('');
     setNewInputCost('');
+    setNewInputDate('');
+  };
+
+  const handleUpdateInputDate = (index: number, date: string) => {
+    const newInputs = [...editData.inputs];
+    newInputs[index] = { ...newInputs[index], date: date || undefined };
+    setEditData({ ...editData, inputs: newInputs });
   };
 
   const handleRemoveInput = (index: number) => {
@@ -148,13 +158,15 @@ export function ProjectDetailsSection({
         <CardContent className="space-y-6">
           {/* Main Metrics Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <MetricCard
+            <MetricCardWithDate
               icon={DollarSign}
               label="Capital"
               tooltip={fieldDefinitions.capital}
               value={editData.capital}
+              date={editData.capitalDate}
               isEditing={isEditing && !isCompleted}
               onChange={(v) => setEditData({ ...editData, capital: parseFloat(v) || 0 })}
+              onDateChange={(d) => setEditData({ ...editData, capitalDate: d || undefined })}
               format="currency"
             />
             <MetricCard
@@ -166,13 +178,15 @@ export function ProjectDetailsSection({
               onChange={(v) => setEditData({ ...editData, totalItemCount: parseInt(v) || 0 })}
               format="number"
             />
-            <MetricCard
+            <MetricCardWithDate
               icon={Coins}
               label="Costs"
               tooltip={fieldDefinitions.costs}
               value={editData.costs}
+              date={editData.costsDate}
               isEditing={isEditing && !isCompleted}
               onChange={(v) => setEditData({ ...editData, costs: parseFloat(v) || 0 })}
+              onDateChange={(d) => setEditData({ ...editData, costsDate: d || undefined })}
               format="currency"
               variant="destructive"
             />
@@ -221,8 +235,14 @@ export function ProjectDetailsSection({
                           type="number"
                           value={input.cost || ''}
                           onChange={(e) => handleUpdateInput(index, 'cost', e.target.value)}
-                          className="h-8 text-sm w-24 text-right bg-background"
+                          className="h-8 text-sm w-20 text-right bg-background"
                           placeholder="Cost"
+                        />
+                        <Input
+                          type="date"
+                          value={input.date || ''}
+                          onChange={(e) => handleUpdateInputDate(index, e.target.value)}
+                          className="h-8 text-sm w-32 bg-background"
                         />
                         <Button
                           variant="ghost"
@@ -236,6 +256,12 @@ export function ProjectDetailsSection({
                     ) : (
                       <>
                         <span className="text-sm flex-1">{input.name}</span>
+                        {input.date && (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Calendar className="h-3 w-3" />
+                            {formatDate(new Date(input.date), 'MMM yyyy')}
+                          </span>
+                        )}
                         <span className="text-sm tabular-nums text-muted-foreground">
                           {input.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
@@ -247,12 +273,12 @@ export function ProjectDetailsSection({
             )}
 
             {isEditing && !isCompleted && (
-              <div className="flex gap-2 pt-1">
+              <div className="flex gap-2 pt-1 flex-wrap">
                 <Input
                   placeholder="Input name (e.g., fertilizer)"
                   value={newInputName}
                   onChange={(e) => setNewInputName(e.target.value)}
-                  className="h-8 text-sm flex-1"
+                  className="h-8 text-sm flex-1 min-w-[120px]"
                   onKeyDown={(e) => e.key === 'Enter' && handleAddInput()}
                 />
                 <Input
@@ -260,8 +286,15 @@ export function ProjectDetailsSection({
                   placeholder="Cost"
                   value={newInputCost}
                   onChange={(e) => setNewInputCost(e.target.value)}
-                  className="h-8 text-sm w-24 text-right"
+                  className="h-8 text-sm w-20 text-right"
                   onKeyDown={(e) => e.key === 'Enter' && handleAddInput()}
+                />
+                <Input
+                  type="date"
+                  placeholder="Date"
+                  value={newInputDate}
+                  onChange={(e) => setNewInputDate(e.target.value)}
+                  className="h-8 text-sm w-32"
                 />
                 <Button
                   variant="outline"
@@ -370,19 +403,6 @@ export function ProjectDetailsSection({
             </div>
           )}
 
-          {/* Profit Projection */}
-          <div className="pt-3 border-t border-border">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-muted-foreground">Projected Profit/Loss:</span>
-              <span className={cn(
-                "font-semibold tabular-nums",
-                editData.estimatedRevenue - editData.costs - totalInputsCost >= 0 ? "text-success" : "text-destructive"
-              )}>
-                {editData.estimatedRevenue - editData.costs - totalInputsCost >= 0 ? '+' : ''}
-                {(editData.estimatedRevenue - editData.costs - totalInputsCost).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </span>
-            </div>
-          </div>
         </CardContent>
       </Card>
     </TooltipProvider>
@@ -435,6 +455,74 @@ function MetricCard({ icon: Icon, label, tooltip, value, isEditing, onChange, fo
               {format === 'currency' && variant === 'destructive' && value > 0 && '-'}
               {format === 'currency' && variant === 'success' && value > 0 && '+'}
               {formatValue(value)}
+            </div>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-[250px]">
+        <p className="text-xs">{tooltip}</p>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+interface MetricCardWithDateProps extends MetricCardProps {
+  date?: string;
+  onDateChange: (value: string) => void;
+}
+
+function MetricCardWithDate({ icon: Icon, label, tooltip, value, date, isEditing, onChange, onDateChange, format, variant = 'default' }: MetricCardWithDateProps) {
+  const colorClass = variant === 'success' 
+    ? 'text-success' 
+    : variant === 'destructive' 
+      ? 'text-destructive' 
+      : 'text-foreground';
+
+  const formatValue = (v: number) => {
+    if (format === 'currency') {
+      return v.toLocaleString(undefined, { minimumFractionDigits: 2 });
+    }
+    return v.toLocaleString();
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="p-3 rounded-lg bg-muted/50 space-y-1 cursor-help">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Icon className="h-3 w-3" />
+            <span>{label}</span>
+          </div>
+          {isEditing ? (
+            <div className="space-y-1">
+              <Input
+                type="number"
+                value={value || ''}
+                onChange={(e) => onChange(e.target.value)}
+                className="h-8 text-sm font-semibold bg-background"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <Input
+                type="date"
+                value={date || ''}
+                onChange={(e) => onDateChange(e.target.value)}
+                className="h-7 text-xs bg-background"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          ) : (
+            <div>
+              <div className={cn("text-lg font-semibold tabular-nums", colorClass)}>
+                {format === 'currency' && variant === 'destructive' && value > 0 && '-'}
+                {format === 'currency' && variant === 'success' && value > 0 && '+'}
+                {formatValue(value)}
+              </div>
+              {date && (
+                <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Calendar className="h-2.5 w-2.5" />
+                  {formatDate(new Date(date), 'MMM yyyy')}
+                </div>
+              )}
             </div>
           )}
         </div>
