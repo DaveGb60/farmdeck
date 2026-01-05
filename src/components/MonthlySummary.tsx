@@ -89,10 +89,10 @@ export function MonthlySummary({ aggregations, projectDetails, isCompleted = fal
             </div>
           </div>
 
-          {/* Surplus/Deficit Section - Shows when project is completed or has projected revenue */}
+          {/* Projected P/L and Surplus/Deficit Section */}
           {(isCompleted || projectedRevenue > 0) && (
             <div className="pt-3 border-t border-border">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+              <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-sm">
                 <div>
                   <p className="text-muted-foreground text-xs flex items-center gap-1">
                     <Target className="h-3 w-3" />
@@ -107,16 +107,6 @@ export function MonthlySummary({ aggregations, projectDetails, isCompleted = fal
                   </p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground text-xs">Realized P/L</p>
-                  <p className={cn(
-                    "font-semibold tabular-nums",
-                    overallProfit > 0 && "text-success",
-                    overallProfit < 0 && "text-destructive"
-                  )}>
-                    {overallProfit > 0 ? '+' : ''}{overallProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
-                </div>
-                <div className="col-span-2 md:col-span-1">
                   <p className="text-muted-foreground text-xs">
                     {isSurplus ? 'Surplus' : isDeficit ? 'Deficit' : 'On Target'}
                   </p>
@@ -133,7 +123,7 @@ export function MonthlySummary({ aggregations, projectDetails, isCompleted = fal
                     </span>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    (Realized P/L - Projected P/L)
+                    (Realized - Projected)
                   </p>
                 </div>
               </div>
