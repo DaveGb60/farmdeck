@@ -5,7 +5,9 @@ import { openDB, DBSchema, IDBPDatabase } from 'idb';
 export interface InputItem {
   name: string;
   cost: number;
-  date?: string; // YYYY-MM-DD - when this cost was incurred
+  date?: string; // YYYY-MM-DD - when this cost was incurred (start date if recurring)
+  isRecurring?: boolean; // Whether this cost spans multiple months
+  endDate?: string; // YYYY-MM-DD - end date for recurring costs
 }
 
 // Cost entry with timestamp
@@ -13,6 +15,26 @@ export interface CostEntry {
   amount: number;
   date: string; // YYYY-MM-DD - when this cost was incurred
   description?: string;
+}
+
+// Helper to get all months between two dates
+export function getMonthsBetween(startDate: string, endDate: string): string[] {
+  const months: string[] = [];
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  
+  // Normalize to first of month
+  start.setDate(1);
+  end.setDate(1);
+  
+  while (start <= end) {
+    const year = start.getFullYear();
+    const month = String(start.getMonth() + 1).padStart(2, '0');
+    months.push(`${year}-${month}`);
+    start.setMonth(start.getMonth() + 1);
+  }
+  
+  return months;
 }
 
 // Project Details (Section 1) - editable until project is completed
@@ -469,26 +491,50 @@ export async function getMonthlyAggregation(
       }
     }
 
-    // Add input costs to their specific months
+    // Add input costs to their specific months (with recurring cost support)
     for (const input of projectDetails.inputs || []) {
       if (input.cost > 0) {
-        const inputMonth = input.date 
-          ? getMonthFromDate(input.date)
-          : Object.keys(monthlyData).sort()[0]; // First month as fallback
-        
-        if (inputMonth && monthlyData[inputMonth]) {
-          monthlyData[inputMonth].totalInputCost += input.cost;
-        } else if (inputMonth) {
-          monthlyData[inputMonth] = {
-            month: inputMonth,
-            projectId,
-            totalInputCost: input.cost,
-            totalProduceAmount: 0,
-            totalRevenue: 0,
-            grossProfit: 0,
-            netProfit: 0,
-            recordCount: 0,
-          };
+        // Check if this is a recurring cost
+        if (input.isRecurring && input.date && input.endDate) {
+          const months = getMonthsBetween(input.date, input.endDate);
+          const costPerMonth = input.cost / months.length;
+          
+          for (const month of months) {
+            if (monthlyData[month]) {
+              monthlyData[month].totalInputCost += costPerMonth;
+            } else {
+              monthlyData[month] = {
+                month,
+                projectId,
+                totalInputCost: costPerMonth,
+                totalProduceAmount: 0,
+                totalRevenue: 0,
+                grossProfit: 0,
+                netProfit: 0,
+                recordCount: 0,
+              };
+            }
+          }
+        } else {
+          // Single month cost (existing logic)
+          const inputMonth = input.date 
+            ? getMonthFromDate(input.date)
+            : Object.keys(monthlyData).sort()[0]; // First month as fallback
+          
+          if (inputMonth && monthlyData[inputMonth]) {
+            monthlyData[inputMonth].totalInputCost += input.cost;
+          } else if (inputMonth) {
+            monthlyData[inputMonth] = {
+              month: inputMonth,
+              projectId,
+              totalInputCost: input.cost,
+              totalProduceAmount: 0,
+              totalRevenue: 0,
+              grossProfit: 0,
+              netProfit: 0,
+              recordCount: 0,
+            };
+          }
         }
       }
     }

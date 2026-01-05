@@ -7,8 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { Save, Lock, DollarSign, Package, TrendingUp, Plus, X, ShoppingCart, Coins, Calendar } from 'lucide-react';
-import { format as formatDate } from 'date-fns';
+import { Save, Lock, DollarSign, Package, TrendingUp, Plus, X, ShoppingCart, Coins, Calendar, Repeat } from 'lucide-react';
+import { formatDate, differenceInMonths } from 'date-fns';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
 interface ProjectDetailsSectionProps {
@@ -38,6 +39,8 @@ export function ProjectDetailsSection({
   const [newInputName, setNewInputName] = useState('');
   const [newInputCost, setNewInputCost] = useState('');
   const [newInputDate, setNewInputDate] = useState('');
+  const [newInputIsRecurring, setNewInputIsRecurring] = useState(false);
+  const [newInputEndDate, setNewInputEndDate] = useState('');
 
   const handleSave = () => {
     onUpdateDetails(editData);
@@ -68,6 +71,8 @@ export function ProjectDetailsSection({
       name: newInputName.trim(),
       cost: parseFloat(newInputCost) || 0,
       date: newInputDate || undefined,
+      isRecurring: newInputIsRecurring,
+      endDate: newInputIsRecurring ? newInputEndDate || undefined : undefined,
     };
     setEditData({
       ...editData,
@@ -76,11 +81,29 @@ export function ProjectDetailsSection({
     setNewInputName('');
     setNewInputCost('');
     setNewInputDate('');
+    setNewInputIsRecurring(false);
+    setNewInputEndDate('');
   };
 
   const handleUpdateInputDate = (index: number, date: string) => {
     const newInputs = [...editData.inputs];
     newInputs[index] = { ...newInputs[index], date: date || undefined };
+    setEditData({ ...editData, inputs: newInputs });
+  };
+
+  const handleUpdateInputEndDate = (index: number, endDate: string) => {
+    const newInputs = [...editData.inputs];
+    newInputs[index] = { ...newInputs[index], endDate: endDate || undefined };
+    setEditData({ ...editData, inputs: newInputs });
+  };
+
+  const handleToggleRecurring = (index: number, isRecurring: boolean) => {
+    const newInputs = [...editData.inputs];
+    newInputs[index] = { 
+      ...newInputs[index], 
+      isRecurring,
+      endDate: isRecurring ? newInputs[index].endDate : undefined 
+    };
     setEditData({ ...editData, inputs: newInputs });
   };
 
@@ -222,50 +245,84 @@ export function ProjectDetailsSection({
             {editData.inputs.length > 0 && (
               <div className="space-y-2">
                 {editData.inputs.map((input, index) => (
-                  <div key={index} className="flex items-center gap-2 p-2 rounded-lg bg-muted/50">
+                  <div key={index} className="p-2 rounded-lg bg-muted/50 space-y-2">
                     {isEditing && !isCompleted ? (
                       <>
-                        <Input
-                          value={input.name}
-                          onChange={(e) => handleUpdateInput(index, 'name', e.target.value)}
-                          className="h-8 text-sm flex-1 bg-background"
-                          placeholder="Input name"
-                        />
-                        <Input
-                          type="number"
-                          value={input.cost || ''}
-                          onChange={(e) => handleUpdateInput(index, 'cost', e.target.value)}
-                          className="h-8 text-sm w-20 text-right bg-background"
-                          placeholder="Cost"
-                        />
-                        <Input
-                          type="date"
-                          value={input.date || ''}
-                          onChange={(e) => handleUpdateInputDate(index, e.target.value)}
-                          className="h-8 text-sm w-32 bg-background"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10"
-                          onClick={() => handleRemoveInput(index)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={input.name}
+                            onChange={(e) => handleUpdateInput(index, 'name', e.target.value)}
+                            className="h-8 text-sm flex-1 bg-background"
+                            placeholder="Input name"
+                          />
+                          <Input
+                            type="number"
+                            value={input.cost || ''}
+                            onChange={(e) => handleUpdateInput(index, 'cost', e.target.value)}
+                            className="h-8 text-sm w-20 text-right bg-background"
+                            placeholder="Cost"
+                          />
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 text-destructive hover:bg-destructive/10"
+                            onClick={() => handleRemoveInput(index)}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Input
+                            type="date"
+                            value={input.date || ''}
+                            onChange={(e) => handleUpdateInputDate(index, e.target.value)}
+                            className="h-7 text-xs w-32 bg-background"
+                            placeholder="Start date"
+                          />
+                          <div className="flex items-center gap-1.5">
+                            <Switch
+                              id={`recurring-${index}`}
+                              checked={input.isRecurring || false}
+                              onCheckedChange={(checked) => handleToggleRecurring(index, checked)}
+                              className="scale-75"
+                            />
+                            <Label htmlFor={`recurring-${index}`} className="text-xs text-muted-foreground cursor-pointer">
+                              <Repeat className="h-3 w-3 inline mr-1" />
+                              Recurring
+                            </Label>
+                          </div>
+                          {input.isRecurring && (
+                            <Input
+                              type="date"
+                              value={input.endDate || ''}
+                              onChange={(e) => handleUpdateInputEndDate(index, e.target.value)}
+                              className="h-7 text-xs w-32 bg-background"
+                              placeholder="End date"
+                            />
+                          )}
+                        </div>
                       </>
                     ) : (
-                      <>
+                      <div className="flex items-center gap-2">
                         <span className="text-sm flex-1">{input.name}</span>
-                        {input.date && (
+                        {input.isRecurring && input.date && input.endDate ? (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1 bg-primary/10 px-1.5 py-0.5 rounded">
+                            <Repeat className="h-3 w-3" />
+                            {formatDate(new Date(input.date), 'MMM yy')} - {formatDate(new Date(input.endDate), 'MMM yy')}
+                            <span className="text-[10px]">
+                              ({differenceInMonths(new Date(input.endDate), new Date(input.date)) + 1} mo)
+                            </span>
+                          </span>
+                        ) : input.date ? (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
                             {formatDate(new Date(input.date), 'MMM yyyy')}
                           </span>
-                        )}
+                        ) : null}
                         <span className="text-sm tabular-nums text-muted-foreground">
                           {input.cost.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </span>
-                      </>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -273,38 +330,67 @@ export function ProjectDetailsSection({
             )}
 
             {isEditing && !isCompleted && (
-              <div className="flex gap-2 pt-1 flex-wrap">
-                <Input
-                  placeholder="Input name (e.g., fertilizer)"
-                  value={newInputName}
-                  onChange={(e) => setNewInputName(e.target.value)}
-                  className="h-8 text-sm flex-1 min-w-[120px]"
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddInput()}
-                />
-                <Input
-                  type="number"
-                  placeholder="Cost"
-                  value={newInputCost}
-                  onChange={(e) => setNewInputCost(e.target.value)}
-                  className="h-8 text-sm w-20 text-right"
-                  onKeyDown={(e) => e.key === 'Enter' && handleAddInput()}
-                />
-                <Input
-                  type="date"
-                  placeholder="Date"
-                  value={newInputDate}
-                  onChange={(e) => setNewInputDate(e.target.value)}
-                  className="h-8 text-sm w-32"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAddInput}
-                  disabled={!newInputName.trim()}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add
-                </Button>
+              <div className="space-y-2 pt-1">
+                <div className="flex gap-2 flex-wrap">
+                  <Input
+                    placeholder="Input name (e.g., utilities)"
+                    value={newInputName}
+                    onChange={(e) => setNewInputName(e.target.value)}
+                    className="h-8 text-sm flex-1 min-w-[120px]"
+                    onKeyDown={(e) => e.key === 'Enter' && !newInputIsRecurring && handleAddInput()}
+                  />
+                  <Input
+                    type="number"
+                    placeholder="Total cost"
+                    value={newInputCost}
+                    onChange={(e) => setNewInputCost(e.target.value)}
+                    className="h-8 text-sm w-24 text-right"
+                  />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Input
+                    type="date"
+                    placeholder="Start date"
+                    value={newInputDate}
+                    onChange={(e) => setNewInputDate(e.target.value)}
+                    className="h-7 text-xs w-32"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Switch
+                      id="new-recurring"
+                      checked={newInputIsRecurring}
+                      onCheckedChange={setNewInputIsRecurring}
+                      className="scale-75"
+                    />
+                    <Label htmlFor="new-recurring" className="text-xs text-muted-foreground cursor-pointer">
+                      <Repeat className="h-3 w-3 inline mr-1" />
+                      Recurring
+                    </Label>
+                  </div>
+                  {newInputIsRecurring && (
+                    <Input
+                      type="date"
+                      placeholder="End date"
+                      value={newInputEndDate}
+                      onChange={(e) => setNewInputEndDate(e.target.value)}
+                      className="h-7 text-xs w-32"
+                    />
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddInput}
+                    disabled={!newInputName.trim() || (newInputIsRecurring && (!newInputDate || !newInputEndDate))}
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add
+                  </Button>
+                </div>
+                {newInputIsRecurring && newInputDate && newInputEndDate && parseFloat(newInputCost) > 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Cost will be split: {(parseFloat(newInputCost) / (differenceInMonths(new Date(newInputEndDate), new Date(newInputDate)) + 1)).toLocaleString(undefined, { minimumFractionDigits: 2 })}/month
+                  </p>
+                )}
               </div>
             )}
 
