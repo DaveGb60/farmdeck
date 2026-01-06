@@ -53,6 +53,8 @@ export interface ProjectDetails {
 
 export type ColumnType = 'text' | 'number' | 'cash_inflow' | 'cash_outflow';
 
+export type RecordType = 'standard' | 'delayed_revenue';
+
 export interface FarmProject {
   id: string;
   title: string;
@@ -61,6 +63,7 @@ export interface FarmProject {
   updatedAt: string;
   customColumns: string[];
   customColumnTypes: Record<string, ColumnType>;
+  recordType: RecordType; // 'standard' = immediate revenue, 'delayed_revenue' = batch sales
   isCompleted: boolean;
   completedAt?: string;
   details: ProjectDetails;
@@ -82,6 +85,13 @@ export interface FarmRecord {
   customFields: Record<string, string | number>;
   createdAt: string;
   updatedAt: string;
+  // Delayed revenue fields
+  isBatchSale?: boolean; // True when this record represents a batch sale
+  isCarriedBalance?: boolean; // True when this record is unsold inventory carried forward
+  sourceRecordIds?: string[]; // IDs of records that contributed to this batch sale
+  soldQuantity?: number; // Quantity actually sold (for partial sales)
+  availableQuantity?: number; // Remaining quantity available for sale (for delayed revenue tracking)
+  batchSaleId?: string; // Links carried balance to its originating batch sale
 }
 
 export interface MonthlyAggregation {
@@ -153,7 +163,7 @@ export function createDefaultProjectDetails(): ProjectDetails {
 }
 
 // Project operations
-export async function createProject(title: string, startDate: string, customColumns: string[] = [], existingId?: string): Promise<FarmProject> {
+export async function createProject(title: string, startDate: string, customColumns: string[] = [], existingId?: string, recordType: RecordType = 'standard'): Promise<FarmProject> {
   const db = await getDB();
   const now = new Date().toISOString();
   const project: FarmProject = {
@@ -164,6 +174,7 @@ export async function createProject(title: string, startDate: string, customColu
     updatedAt: now,
     customColumns,
     customColumnTypes: {},
+    recordType,
     isCompleted: false,
     details: createDefaultProjectDetails(),
   };
@@ -179,6 +190,7 @@ export async function importProject(projectData: FarmProject): Promise<FarmProje
     // Ensure details exists (for backward compatibility)
     details: projectData.details || createDefaultProjectDetails(),
     customColumnTypes: projectData.customColumnTypes || {},
+    recordType: projectData.recordType || 'standard',
     isCompleted: projectData.isCompleted || false,
     updatedAt: new Date().toISOString(),
   };
@@ -240,6 +252,7 @@ export async function getAllProjects(): Promise<FarmProject[]> {
       isCompleted: p.isCompleted ?? false,
       details: p.details ?? createDefaultProjectDetails(),
       customColumnTypes: p.customColumnTypes ?? {},
+      recordType: p.recordType ?? 'standard',
     }));
 }
 
@@ -254,6 +267,7 @@ export async function getDeletedProjects(): Promise<FarmProject[]> {
       isCompleted: p.isCompleted ?? false,
       details: p.details ?? createDefaultProjectDetails(),
       customColumnTypes: p.customColumnTypes ?? {},
+      recordType: p.recordType ?? 'standard',
     }))
     .sort((a, b) => new Date(b.deletedAt!).getTime() - new Date(a.deletedAt!).getTime());
 }
@@ -268,6 +282,7 @@ export async function getProject(id: string): Promise<FarmProject | undefined> {
     isCompleted: project.isCompleted ?? false,
     details: project.details ?? createDefaultProjectDetails(),
     customColumnTypes: project.customColumnTypes ?? {},
+    recordType: project.recordType ?? 'standard',
   };
 }
 

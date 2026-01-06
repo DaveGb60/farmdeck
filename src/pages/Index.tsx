@@ -3,6 +3,7 @@ import { Header } from '@/components/Header';
 import { ProjectCard } from '@/components/ProjectCard';
 import { CreateProjectDialog } from '@/components/CreateProjectDialog';
 import { RecordTable } from '@/components/RecordTable';
+import { DelayedRevenueRecordTable } from '@/components/DelayedRevenueRecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
 import { ProjectDetailsSection } from '@/components/ProjectDetailsSection';
 import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
@@ -12,6 +13,7 @@ import { NotesEditor } from '@/components/NotesEditor';
 import { ColumnManagerDropdown, CustomColumn, ColumnType } from '@/components/ColumnManagerDropdown';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +29,7 @@ import {
   FarmRecord,
   MonthlyAggregation,
   ProjectDetails,
+  RecordType,
   getAllProjects,
   createProject,
   deleteProject,
@@ -40,8 +43,9 @@ import {
   updateProjectDetails,
   completeProject,
   updateProject,
+  generateId,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2 } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -267,6 +271,81 @@ const Index = () => {
       toast({ title: 'Error reordering columns', variant: 'destructive' });
     }
   };
+
+  const handleChangeRecordType = async (recordType: RecordType) => {
+    if (!selectedProject || selectedProject.isCompleted) return;
+    try {
+      const updatedProject = { ...selectedProject, recordType };
+      await updateProject(updatedProject);
+      setSelectedProject(updatedProject);
+      toast({ title: `Switched to ${recordType === 'delayed_revenue' ? 'Delayed Revenue' : 'Standard'} mode` });
+    } catch (error) {
+      toast({ title: 'Error changing record type', variant: 'destructive' });
+    }
+  };
+
+  const handleBatchSale = async (saleData: {
+    date: string;
+    soldQuantity: number;
+    revenue: number;
+    sourceRecords: FarmRecord[];
+    comment?: string;
+  }) => {
+    if (!selectedProject) return;
+    try {
+      const batchSaleId = generateId();
+      let remainingToSell = saleData.soldQuantity;
+      const updatedRecords: FarmRecord[] = [];
+
+      // Deduct from source records (FIFO)
+      for (const record of saleData.sourceRecords) {
+        if (remainingToSell <= 0) break;
+        const available = record.availableQuantity ?? record.produceAmount;
+        const deducted = Math.min(available, remainingToSell);
+        remainingToSell -= deducted;
+        
+        const updatedRecord = { ...record, availableQuantity: available - deducted };
+        await updateRecord(updatedRecord);
+        updatedRecords.push(updatedRecord);
+      }
+
+      // Create batch sale record
+      const saleRecord = await createRecord(selectedProject.id, {
+        date: saleData.date,
+        produceAmount: 0,
+        produceRevenue: saleData.revenue,
+        comment: saleData.comment || `Batch sale of ${saleData.soldQuantity} units`,
+        customFields: {},
+        isBatchSale: true,
+        soldQuantity: saleData.soldQuantity,
+        sourceRecordIds: saleData.sourceRecords.map(r => r.id),
+        batchSaleId,
+      });
+
+      // Check for remainder and create carried balance if needed
+      const totalAvailable = saleData.sourceRecords.reduce((sum, r) => sum + (r.availableQuantity ?? r.produceAmount), 0);
+      const remainder = totalAvailable - saleData.soldQuantity;
+      
+      if (remainder > 0) {
+        await createRecord(selectedProject.id, {
+          date: saleData.date,
+          produceAmount: remainder,
+          produceRevenue: 0,
+          comment: `Carried balance from batch sale`,
+          customFields: {},
+          isCarriedBalance: true,
+          availableQuantity: remainder,
+          batchSaleId,
+        });
+      }
+
+      // Reload records
+      await loadRecords(selectedProject.id, selectedProject.details, customColumnTypes);
+      toast({ title: 'Batch sale recorded successfully' });
+    } catch (error) {
+      toast({ title: 'Error recording batch sale', variant: 'destructive' });
+    }
+  };
   if (selectedProject) {
     return (
       <div className="min-h-screen bg-gradient-earth">
@@ -336,7 +415,35 @@ const Index = () => {
             <TabsContent value="components" className="space-y-6 mt-6">
               <div>
                 <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
-                  <h3 className="font-serif text-lg font-semibold">Project Records</h3>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-serif text-lg font-semibold">Project Records</h3>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-7 px-2" disabled={selectedProject.isCompleted}>
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="bg-popover z-50">
+                        <DropdownMenuItem 
+                          onClick={() => handleChangeRecordType('standard')}
+                          className={selectedProject.recordType === 'standard' ? 'bg-accent' : ''}
+                        >
+                          <Zap className="h-4 w-4 mr-2" />
+                          Standard (Immediate Revenue)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          onClick={() => handleChangeRecordType('delayed_revenue')}
+                          className={selectedProject.recordType === 'delayed_revenue' ? 'bg-accent' : ''}
+                        >
+                          <Package className="h-4 w-4 mr-2" />
+                          Delayed Revenue (Batch Sales)
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    {selectedProject.recordType === 'delayed_revenue' && (
+                      <span className="text-xs bg-warning/20 text-warning px-2 py-1 rounded">Delayed Revenue</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-3">
                     <ColumnManagerDropdown
                       columns={selectedProject.customColumns}
@@ -351,15 +458,28 @@ const Index = () => {
                     </p>
                   </div>
                 </div>
-                <RecordTable
-                  project={selectedProject}
-                  records={records}
-                  onAddRecord={handleAddRecord}
-                  onUpdateRecord={handleUpdateRecord}
-                  onDeleteRecord={handleDeleteRecord}
-                  onLockRecord={handleLockRecord}
-                  customColumnTypes={customColumnTypes}
-                />
+                {selectedProject.recordType === 'delayed_revenue' ? (
+                  <DelayedRevenueRecordTable
+                    project={selectedProject}
+                    records={records}
+                    onAddRecord={handleAddRecord}
+                    onUpdateRecord={handleUpdateRecord}
+                    onDeleteRecord={handleDeleteRecord}
+                    onLockRecord={handleLockRecord}
+                    onBatchSale={handleBatchSale}
+                    customColumnTypes={customColumnTypes}
+                  />
+                ) : (
+                  <RecordTable
+                    project={selectedProject}
+                    records={records}
+                    onAddRecord={handleAddRecord}
+                    onUpdateRecord={handleUpdateRecord}
+                    onDeleteRecord={handleDeleteRecord}
+                    onLockRecord={handleLockRecord}
+                    customColumnTypes={customColumnTypes}
+                  />
+                )}
               </div>
             </TabsContent>
           </Tabs>
