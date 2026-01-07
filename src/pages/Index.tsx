@@ -10,6 +10,7 @@ import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
 import { BluetoothImportDialog } from '@/components/BluetoothImportDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { NotesEditor } from '@/components/NotesEditor';
+import { P2PSyncDialog } from '@/components/P2PSyncDialog';
 import { ColumnManagerDropdown, CustomColumn, ColumnType } from '@/components/ColumnManagerDropdown';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -45,7 +46,7 @@ import {
   updateProject,
   generateId,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap, Wifi } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -60,6 +61,7 @@ const Index = () => {
   const [shareProject, setShareProject] = useState<{ project: FarmProject; records: FarmRecord[] } | null>(null);
   const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [isPDFExportOpen, setIsPDFExportOpen] = useState(false);
+  const [isP2PSyncOpen, setIsP2PSyncOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<'details' | 'components'>('details');
   const [customColumnTypes, setCustomColumnTypes] = useState<Record<string, ColumnType>>({});
   const { toast } = useToast();
@@ -544,6 +546,10 @@ const Index = () => {
           <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
             <h2 className="font-serif text-xl font-semibold">Your Projects</h2>
             <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setIsP2PSyncOpen(true)}>
+                <Wifi className="h-4 w-4 mr-2" />
+                Sync
+              </Button>
               <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
                 <Download className="h-4 w-4 mr-2" />
                 Import
@@ -607,6 +613,13 @@ const Index = () => {
         open={isScannerOpen}
         onOpenChange={setIsScannerOpen}
         onImportComplete={loadProjects}
+      />
+
+      <P2PSyncDialog
+        open={isP2PSyncOpen}
+        onOpenChange={setIsP2PSyncOpen}
+        projects={projects}
+        onSyncComplete={loadProjects}
       />
 
       {shareProject && (

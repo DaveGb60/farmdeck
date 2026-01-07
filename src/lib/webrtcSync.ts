@@ -1,0 +1,636 @@
+// WebRTC P2P Sync for FarmDeck PWA
+import { FarmProject, FarmRecord, getRecordsByProject, importProject, importRecord } from './db';
+
+// Types for sync metadata and messages
+export interface SyncMetadata {
+  deviceId: string;
+  deviceName: string;
+  projectCount: number;
+  recordCount: number;
+  lastUpdated: string;
+  projects: ProjectSummary[];
+}
+
+export interface ProjectSummary {
+  id: string;
+  title: string;
+  recordCount: number;
+  updatedAt: string;
+  startDate: string;
+  isCompleted: boolean;
+}
+
+export interface SyncMessage {
+  type: 'offer' | 'answer' | 'ice-candidate' | 'metadata' | 'data-chunk' | 'data-complete' | 
+        'sync-request' | 'sync-accept' | 'sync-reject' | 'cancel' | 'ack' | 'error';
+  payload: unknown;
+  timestamp: number;
+  messageId: string;
+}
+
+export interface SyncDataPayload {
+  projects: FarmProject[];
+  records: FarmRecord[];
+}
+
+export interface TransferProgress {
+  phase: 'metadata' | 'selecting' | 'transferring' | 'complete' | 'cancelled' | 'error';
+  totalChunks: number;
+  sentChunks: number;
+  totalBytes: number;
+  sentBytes: number;
+  direction: 'send' | 'receive';
+}
+
+export interface ConflictInfo {
+  type: 'newer_local' | 'newer_remote' | 'both_modified';
+  localVersion: string;
+  remoteVersion: string;
+  projectId: string;
+  projectTitle: string;
+}
+
+export interface SyncSelection {
+  projectIds: string[];
+  direction: 'send' | 'receive' | 'bidirectional';
+  resolveConflicts: 'keep_local' | 'keep_remote' | 'keep_newer';
+}
+
+// Generate a unique device ID (persisted in localStorage)
+export function getDeviceId(): string {
+  let deviceId = localStorage.getItem('farmdeck-device-id');
+  if (!deviceId) {
+    deviceId = `device-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('farmdeck-device-id', deviceId);
+  }
+  return deviceId;
+}
+
+// Generate a short pairing code (6 alphanumeric chars)
+export function generatePairingCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing chars
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+// Generate unique message ID
+export function generateMessageId(): string {
+  return `msg-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+}
+
+// Chunk size for data transfer (16KB for reliability)
+const CHUNK_SIZE = 16 * 1024;
+
+// Encode data to base64 chunks
+export function chunkData(data: string): string[] {
+  const chunks: string[] = [];
+  for (let i = 0; i < data.length; i += CHUNK_SIZE) {
+    chunks.push(data.slice(i, i + CHUNK_SIZE));
+  }
+  return chunks;
+}
+
+// WebRTC Connection Manager
+export class WebRTCSync {
+  private pc: RTCPeerConnection | null = null;
+  private dc: RTCDataChannel | null = null;
+  private pairingCode: string = '';
+  private isInitiator: boolean = false;
+  private receivedChunks: string[] = [];
+  private expectedChunks: number = 0;
+  
+  // Callbacks
+  public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+  public onDataChannelStateChange?: (state: RTCDataChannelState) => void;
+  public onMetadataReceived?: (metadata: SyncMetadata) => void;
+  public onSyncRequest?: (selection: SyncSelection, metadata: SyncMetadata) => void;
+  public onTransferProgress?: (progress: TransferProgress) => void;
+  public onDataReceived?: (data: SyncDataPayload) => void;
+  public onError?: (error: string) => void;
+  public onMessage?: (message: SyncMessage) => void;
+
+  constructor() {
+    // Initialize with ICE servers for NAT traversal
+    const config: RTCConfiguration = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+      ]
+    };
+    
+    this.pc = new RTCPeerConnection(config);
+    this.setupPeerConnectionHandlers();
+  }
+
+  private setupPeerConnectionHandlers() {
+    if (!this.pc) return;
+
+    this.pc.onconnectionstatechange = () => {
+      console.log('[WebRTC] Connection state:', this.pc?.connectionState);
+      this.onConnectionStateChange?.(this.pc?.connectionState || 'closed');
+    };
+
+    this.pc.oniceconnectionstatechange = () => {
+      console.log('[WebRTC] ICE connection state:', this.pc?.iceConnectionState);
+    };
+
+    this.pc.onicegatheringstatechange = () => {
+      console.log('[WebRTC] ICE gathering state:', this.pc?.iceGatheringState);
+    };
+
+    this.pc.ondatachannel = (event) => {
+      console.log('[WebRTC] Data channel received');
+      this.dc = event.channel;
+      this.setupDataChannelHandlers();
+    };
+  }
+
+  private setupDataChannelHandlers() {
+    if (!this.dc) return;
+
+    this.dc.onopen = () => {
+      console.log('[WebRTC] Data channel open');
+      this.onDataChannelStateChange?.('open');
+    };
+
+    this.dc.onclose = () => {
+      console.log('[WebRTC] Data channel closed');
+      this.onDataChannelStateChange?.('closed');
+    };
+
+    this.dc.onerror = (error) => {
+      console.error('[WebRTC] Data channel error:', error);
+      this.onError?.('Data channel error');
+    };
+
+    this.dc.onmessage = (event) => {
+      try {
+        const message: SyncMessage = JSON.parse(event.data);
+        console.log('[WebRTC] Message received:', message.type);
+        this.handleMessage(message);
+      } catch (error) {
+        console.error('[WebRTC] Failed to parse message:', error);
+      }
+    };
+  }
+
+  private handleMessage(message: SyncMessage) {
+    this.onMessage?.(message);
+
+    switch (message.type) {
+      case 'metadata':
+        this.onMetadataReceived?.(message.payload as SyncMetadata);
+        break;
+      
+      case 'sync-request':
+        const { selection, metadata } = message.payload as { selection: SyncSelection; metadata: SyncMetadata };
+        this.onSyncRequest?.(selection, metadata);
+        break;
+      
+      case 'data-chunk':
+        this.handleDataChunk(message.payload as { index: number; total: number; data: string });
+        break;
+      
+      case 'data-complete':
+        this.handleDataComplete();
+        break;
+      
+      case 'error':
+        this.onError?.(message.payload as string);
+        break;
+      
+      case 'cancel':
+        this.onTransferProgress?.({
+          phase: 'cancelled',
+          totalChunks: 0,
+          sentChunks: 0,
+          totalBytes: 0,
+          sentBytes: 0,
+          direction: 'receive'
+        });
+        break;
+    }
+  }
+
+  private handleDataChunk(chunk: { index: number; total: number; data: string }) {
+    this.receivedChunks[chunk.index] = chunk.data;
+    this.expectedChunks = chunk.total;
+    
+    const receivedCount = this.receivedChunks.filter(c => c !== undefined).length;
+    
+    this.onTransferProgress?.({
+      phase: 'transferring',
+      totalChunks: chunk.total,
+      sentChunks: receivedCount,
+      totalBytes: chunk.total * CHUNK_SIZE,
+      sentBytes: receivedCount * CHUNK_SIZE,
+      direction: 'receive'
+    });
+
+    // Send acknowledgment
+    this.sendMessage({
+      type: 'ack',
+      payload: { index: chunk.index },
+      timestamp: Date.now(),
+      messageId: generateMessageId()
+    });
+  }
+
+  private handleDataComplete() {
+    try {
+      const fullData = this.receivedChunks.join('');
+      const syncData: SyncDataPayload = JSON.parse(fullData);
+      
+      this.onTransferProgress?.({
+        phase: 'complete',
+        totalChunks: this.expectedChunks,
+        sentChunks: this.expectedChunks,
+        totalBytes: fullData.length,
+        sentBytes: fullData.length,
+        direction: 'receive'
+      });
+      
+      this.onDataReceived?.(syncData);
+      this.receivedChunks = [];
+      this.expectedChunks = 0;
+    } catch (error) {
+      console.error('[WebRTC] Failed to parse received data:', error);
+      this.onError?.('Failed to parse received data');
+    }
+  }
+
+  // Create offer (initiator side)
+  async createSession(): Promise<{ offer: RTCSessionDescriptionInit; pairingCode: string }> {
+    if (!this.pc) throw new Error('PeerConnection not initialized');
+    
+    this.isInitiator = true;
+    this.pairingCode = generatePairingCode();
+    
+    // Create data channel before offer
+    this.dc = this.pc.createDataChannel('sync', {
+      ordered: true,
+      maxRetransmits: 3
+    });
+    this.setupDataChannelHandlers();
+
+    const offer = await this.pc.createOffer();
+    await this.pc.setLocalDescription(offer);
+
+    // Wait for ICE gathering to complete
+    await this.waitForIceGathering();
+    
+    return {
+      offer: this.pc.localDescription!,
+      pairingCode: this.pairingCode
+    };
+  }
+
+  // Join session (joiner side)
+  async joinSession(offer: RTCSessionDescriptionInit): Promise<RTCSessionDescriptionInit> {
+    if (!this.pc) throw new Error('PeerConnection not initialized');
+    
+    this.isInitiator = false;
+    
+    await this.pc.setRemoteDescription(offer);
+    const answer = await this.pc.createAnswer();
+    await this.pc.setLocalDescription(answer);
+
+    // Wait for ICE gathering to complete
+    await this.waitForIceGathering();
+    
+    return this.pc.localDescription!;
+  }
+
+  // Complete connection (initiator receives answer)
+  async completeConnection(answer: RTCSessionDescriptionInit): Promise<void> {
+    if (!this.pc) throw new Error('PeerConnection not initialized');
+    await this.pc.setRemoteDescription(answer);
+  }
+
+  // Add ICE candidate
+  async addIceCandidate(candidate: RTCIceCandidateInit): Promise<void> {
+    if (!this.pc) throw new Error('PeerConnection not initialized');
+    await this.pc.addIceCandidate(candidate);
+  }
+
+  // Wait for ICE gathering to complete
+  private waitForIceGathering(): Promise<void> {
+    return new Promise((resolve) => {
+      if (!this.pc) {
+        resolve();
+        return;
+      }
+      
+      if (this.pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+
+      const checkState = () => {
+        if (this.pc?.iceGatheringState === 'complete') {
+          this.pc.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+
+      this.pc.addEventListener('icegatheringstatechange', checkState);
+      
+      // Timeout after 5 seconds
+      setTimeout(() => {
+        this.pc?.removeEventListener('icegatheringstatechange', checkState);
+        resolve();
+      }, 5000);
+    });
+  }
+
+  // Send a message through the data channel
+  sendMessage(message: SyncMessage): boolean {
+    if (!this.dc || this.dc.readyState !== 'open') {
+      console.error('[WebRTC] Data channel not open');
+      return false;
+    }
+    
+    try {
+      this.dc.send(JSON.stringify(message));
+      return true;
+    } catch (error) {
+      console.error('[WebRTC] Failed to send message:', error);
+      return false;
+    }
+  }
+
+  // Send metadata about local data
+  async sendMetadata(projects: FarmProject[]): Promise<void> {
+    const projectSummaries: ProjectSummary[] = [];
+    let totalRecords = 0;
+
+    for (const project of projects) {
+      const records = await getRecordsByProject(project.id);
+      totalRecords += records.length;
+      projectSummaries.push({
+        id: project.id,
+        title: project.title,
+        recordCount: records.length,
+        updatedAt: project.updatedAt,
+        startDate: project.startDate,
+        isCompleted: project.isCompleted
+      });
+    }
+
+    const metadata: SyncMetadata = {
+      deviceId: getDeviceId(),
+      deviceName: navigator.userAgent.includes('Mobile') ? 'Mobile Device' : 'Desktop',
+      projectCount: projects.length,
+      recordCount: totalRecords,
+      lastUpdated: new Date().toISOString(),
+      projects: projectSummaries
+    };
+
+    this.sendMessage({
+      type: 'metadata',
+      payload: metadata,
+      timestamp: Date.now(),
+      messageId: generateMessageId()
+    });
+  }
+
+  // Send sync request
+  sendSyncRequest(selection: SyncSelection, metadata: SyncMetadata): void {
+    this.sendMessage({
+      type: 'sync-request',
+      payload: { selection, metadata },
+      timestamp: Date.now(),
+      messageId: generateMessageId()
+    });
+  }
+
+  // Send data in chunks
+  async sendData(data: SyncDataPayload): Promise<void> {
+    const jsonData = JSON.stringify(data);
+    const chunks = chunkData(jsonData);
+    
+    console.log(`[WebRTC] Sending ${chunks.length} chunks, total size: ${jsonData.length} bytes`);
+
+    for (let i = 0; i < chunks.length; i++) {
+      this.sendMessage({
+        type: 'data-chunk',
+        payload: { index: i, total: chunks.length, data: chunks[i] },
+        timestamp: Date.now(),
+        messageId: generateMessageId()
+      });
+
+      this.onTransferProgress?.({
+        phase: 'transferring',
+        totalChunks: chunks.length,
+        sentChunks: i + 1,
+        totalBytes: jsonData.length,
+        sentBytes: Math.min((i + 1) * CHUNK_SIZE, jsonData.length),
+        direction: 'send'
+      });
+
+      // Small delay to prevent overwhelming the channel
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    this.sendMessage({
+      type: 'data-complete',
+      payload: { totalChunks: chunks.length, totalBytes: jsonData.length },
+      timestamp: Date.now(),
+      messageId: generateMessageId()
+    });
+
+    this.onTransferProgress?.({
+      phase: 'complete',
+      totalChunks: chunks.length,
+      sentChunks: chunks.length,
+      totalBytes: jsonData.length,
+      sentBytes: jsonData.length,
+      direction: 'send'
+    });
+  }
+
+  // Cancel transfer
+  cancelTransfer(): void {
+    this.sendMessage({
+      type: 'cancel',
+      payload: null,
+      timestamp: Date.now(),
+      messageId: generateMessageId()
+    });
+    this.receivedChunks = [];
+  }
+
+  // Close connection
+  close(): void {
+    if (this.dc) {
+      this.dc.close();
+      this.dc = null;
+    }
+    if (this.pc) {
+      this.pc.close();
+      this.pc = null;
+    }
+  }
+
+  // Get connection state
+  get connectionState(): RTCPeerConnectionState | null {
+    return this.pc?.connectionState || null;
+  }
+
+  // Get data channel state
+  get dataChannelState(): RTCDataChannelState | null {
+    return this.dc?.readyState || null;
+  }
+
+  // Check if connected
+  get isConnected(): boolean {
+    return this.pc?.connectionState === 'connected' && this.dc?.readyState === 'open';
+  }
+
+  get code(): string {
+    return this.pairingCode;
+  }
+}
+
+// Detect conflicts between local and remote data
+export function detectConflicts(
+  localProjects: FarmProject[],
+  remoteMetadata: SyncMetadata
+): ConflictInfo[] {
+  const conflicts: ConflictInfo[] = [];
+  
+  for (const remoteSummary of remoteMetadata.projects) {
+    const localProject = localProjects.find(p => p.id === remoteSummary.id);
+    
+    if (localProject) {
+      const localTime = new Date(localProject.updatedAt).getTime();
+      const remoteTime = new Date(remoteSummary.updatedAt).getTime();
+      
+      if (localTime !== remoteTime) {
+        let type: ConflictInfo['type'];
+        if (localTime > remoteTime) {
+          type = 'newer_local';
+        } else if (remoteTime > localTime) {
+          type = 'newer_remote';
+        } else {
+          type = 'both_modified';
+        }
+        
+        conflicts.push({
+          type,
+          localVersion: localProject.updatedAt,
+          remoteVersion: remoteSummary.updatedAt,
+          projectId: remoteSummary.id,
+          projectTitle: remoteSummary.title
+        });
+      }
+    }
+  }
+  
+  return conflicts;
+}
+
+// Apply sync data to local database
+export async function applySyncData(
+  data: SyncDataPayload,
+  conflictResolution: 'keep_local' | 'keep_remote' | 'keep_newer' = 'keep_newer',
+  localProjects: FarmProject[]
+): Promise<{ imported: number; skipped: number; conflicts: number }> {
+  let imported = 0;
+  let skipped = 0;
+  let conflicts = 0;
+
+  for (const project of data.projects) {
+    const localProject = localProjects.find(p => p.id === project.id);
+    
+    if (localProject) {
+      conflicts++;
+      const localTime = new Date(localProject.updatedAt).getTime();
+      const remoteTime = new Date(project.updatedAt).getTime();
+      
+      let shouldImport = false;
+      
+      switch (conflictResolution) {
+        case 'keep_remote':
+          shouldImport = true;
+          break;
+        case 'keep_newer':
+          shouldImport = remoteTime > localTime;
+          break;
+        case 'keep_local':
+        default:
+          shouldImport = false;
+      }
+      
+      if (shouldImport) {
+        await importProject(project);
+        imported++;
+      } else {
+        skipped++;
+      }
+    } else {
+      await importProject(project);
+      imported++;
+    }
+  }
+
+  for (const record of data.records) {
+    try {
+      await importRecord(record);
+    } catch {
+      // Record might be locked or already exists
+      skipped++;
+    }
+  }
+
+  return { imported, skipped, conflicts };
+}
+
+// Create signaling data for QR code (compressed)
+export function createSignalingData(
+  offer: RTCSessionDescriptionInit,
+  pairingCode: string
+): string {
+  const data = {
+    o: offer.sdp, // Offer SDP
+    t: offer.type, // Type
+    c: pairingCode // Code
+  };
+  return btoa(JSON.stringify(data));
+}
+
+// Parse signaling data from QR code
+export function parseSignalingData(encoded: string): { offer: RTCSessionDescriptionInit; pairingCode: string } | null {
+  try {
+    const data = JSON.parse(atob(encoded));
+    return {
+      offer: { sdp: data.o, type: data.t },
+      pairingCode: data.c
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Create answer signaling data
+export function createAnswerData(answer: RTCSessionDescriptionInit): string {
+  const data = {
+    a: answer.sdp,
+    t: answer.type
+  };
+  return btoa(JSON.stringify(data));
+}
+
+// Parse answer signaling data
+export function parseAnswerData(encoded: string): RTCSessionDescriptionInit | null {
+  try {
+    const data = JSON.parse(atob(encoded));
+    return { sdp: data.a, type: data.t };
+  } catch {
+    return null;
+  }
+}
