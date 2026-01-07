@@ -1,5 +1,5 @@
-// Bluetooth Sync Module for FarmDeck
-// Uses Web Bluetooth API with user-gesture-initiated connections
+// File Sync Module for FarmDeck
+// Handles file-based data import/export and sharing
 
 import { FarmProject, FarmRecord, getProject, importProject, importRecord, getRecordsByProject } from './db';
 
@@ -17,15 +17,6 @@ export interface SyncResult {
   newRecords?: number;
   updatedRecords?: number;
   skippedRecords?: number;
-}
-
-// GATT Service and Characteristic UUIDs for FarmDeck data transfer
-const FARMDECK_SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
-const FARMDECK_CHAR_UUID = '0000fff1-0000-1000-8000-00805f9b34fb';
-
-// Check if Web Bluetooth is available
-export function isBluetoothAvailable(): boolean {
-  return typeof navigator !== 'undefined' && 'bluetooth' in navigator;
 }
 
 // Create sync data package
@@ -187,137 +178,6 @@ export async function copyToClipboard(project: FarmProject, records: FarmRecord[
     await navigator.clipboard.writeText(json);
     return true;
   } catch {
-    return false;
-  }
-}
-
-// ============================================
-// Bluetooth Connection Management
-// ============================================
-
-// Web Bluetooth API types (not included in standard TypeScript libs)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type BTDevice = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type BTServer = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type BTCharacteristic = any;
-
-export interface BluetoothConnection {
-  device: BTDevice;
-  server: BTServer | null;
-  characteristic: BTCharacteristic | null;
-}
-
-export interface TransferProgress {
-  total: number;
-  sent: number;
-  status: 'idle' | 'connecting' | 'sending' | 'complete' | 'error';
-  message?: string;
-}
-
-// Scan and connect to a Bluetooth device (requires user gesture)
-export async function connectToBluetoothDevice(): Promise<BluetoothConnection | null> {
-  if (!isBluetoothAvailable()) {
-    throw new Error('Bluetooth is not available in this browser');
-  }
-  
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const nav = navigator as any;
-    
-    // Request device - this MUST be triggered by user gesture
-    const device: BTDevice = await nav.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [FARMDECK_SERVICE_UUID, 'generic_access'],
-    });
-    
-    if (!device) {
-      return null;
-    }
-    
-    // Connect to GATT server
-    const server = await device.gatt?.connect();
-    
-    if (!server) {
-      throw new Error('Failed to connect to device');
-    }
-    
-    // Try to get our custom service/characteristic
-    let characteristic: BTCharacteristic | null = null;
-    try {
-      const service = await server.getPrimaryService(FARMDECK_SERVICE_UUID);
-      characteristic = await service.getCharacteristic(FARMDECK_CHAR_UUID);
-    } catch {
-      // Service not found - device may not be running FarmDeck
-      // This is expected for most devices
-    }
-    
-    return { device, server, characteristic };
-  } catch (error) {
-    if ((error as Error).name === 'NotFoundError') {
-      return null; // User cancelled
-    }
-    throw error;
-  }
-}
-
-// Disconnect from a Bluetooth device
-export function disconnectBluetooth(connection: BluetoothConnection): void {
-  if (connection.server?.connected) {
-    connection.server.disconnect();
-  }
-}
-
-// Check if device is still connected
-export function isDeviceConnected(connection: BluetoothConnection | null): boolean {
-  return connection?.server?.connected ?? false;
-}
-
-// Send data in chunks via Bluetooth (if characteristic available)
-// Note: Most consumer devices won't have our custom service
-// This is mainly for future FarmDeck-to-FarmDeck native app sync
-export async function sendDataViaBluetooth(
-  connection: BluetoothConnection,
-  data: string,
-  onProgress?: (progress: TransferProgress) => void
-): Promise<boolean> {
-  if (!connection.characteristic) {
-    throw new Error('Bluetooth data transfer not supported on this device. Use file sharing instead.');
-  }
-  
-  const encoder = new TextEncoder();
-  const dataBytes = encoder.encode(data);
-  const chunkSize = 512; // BLE typical MTU
-  const totalChunks = Math.ceil(dataBytes.length / chunkSize);
-  
-  onProgress?.({ total: totalChunks, sent: 0, status: 'sending' });
-  
-  try {
-    for (let i = 0; i < totalChunks; i++) {
-      const start = i * chunkSize;
-      const end = Math.min(start + chunkSize, dataBytes.length);
-      const chunk = dataBytes.slice(start, end);
-      
-      await connection.characteristic.writeValue(chunk);
-      
-      onProgress?.({ 
-        total: totalChunks, 
-        sent: i + 1, 
-        status: 'sending',
-        message: `Sending chunk ${i + 1}/${totalChunks}`
-      });
-    }
-    
-    onProgress?.({ total: totalChunks, sent: totalChunks, status: 'complete' });
-    return true;
-  } catch (error) {
-    onProgress?.({ 
-      total: totalChunks, 
-      sent: 0, 
-      status: 'error',
-      message: error instanceof Error ? error.message : 'Transfer failed'
-    });
     return false;
   }
 }

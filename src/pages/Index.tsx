@@ -6,8 +6,8 @@ import { RecordTable } from '@/components/RecordTable';
 import { DelayedRevenueRecordTable } from '@/components/DelayedRevenueRecordTable';
 import { MonthlySummary } from '@/components/MonthlySummary';
 import { ProjectDetailsSection } from '@/components/ProjectDetailsSection';
-import { BluetoothShareDialog } from '@/components/BluetoothShareDialog';
-import { BluetoothImportDialog } from '@/components/BluetoothImportDialog';
+import { ShareDialog } from '@/components/ShareDialog';
+import { ImportDialog } from '@/components/ImportDialog';
 import { PDFExportDialog } from '@/components/PDFExportDialog';
 import { NotesEditor } from '@/components/NotesEditor';
 import { P2PSyncDialog } from '@/components/P2PSyncDialog';
@@ -46,7 +46,7 @@ import {
   updateProject,
   generateId,
 } from '@/lib/db';
-import { Plus, ArrowLeft, Leaf, Database, Lock, Bluetooth, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap, Wifi } from 'lucide-react';
+import { Plus, ArrowLeft, Leaf, Database, Lock, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap, Wifi, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 const Index = () => {
@@ -59,7 +59,7 @@ const Index = () => {
   const [deleteProjectId, setDeleteProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [shareProject, setShareProject] = useState<{ project: FarmProject; records: FarmRecord[] } | null>(null);
-  const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const [isPDFExportOpen, setIsPDFExportOpen] = useState(false);
   const [isP2PSyncOpen, setIsP2PSyncOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<'details' | 'components'>('details');
@@ -140,7 +140,6 @@ const Index = () => {
     const project = await getProject(id);
     if (project) {
       setSelectedProject(project);
-      // Load custom column types from project
       setCustomColumnTypes(project.customColumnTypes || {});
     }
   };
@@ -198,7 +197,6 @@ const Index = () => {
     try {
       await updateProjectDetails(selectedProject.id, details);
       setSelectedProject({ ...selectedProject, details });
-      // Recalculate aggregations with updated costs
       const aggs = await getMonthlyAggregation(selectedProject.id, details, customColumnTypes);
       setAggregations(aggs);
       toast({ title: 'Project details updated' });
@@ -348,6 +346,7 @@ const Index = () => {
       toast({ title: 'Error recording batch sale', variant: 'destructive' });
     }
   };
+
   if (selectedProject) {
     return (
       <div className="min-h-screen bg-gradient-earth">
@@ -488,7 +487,7 @@ const Index = () => {
         </main>
 
         {shareProject && (
-          <BluetoothShareDialog
+          <ShareDialog
             open={!!shareProject}
             onOpenChange={() => setShareProject(null)}
             project={shareProject.project}
@@ -535,8 +534,8 @@ const Index = () => {
               <span>Tamper-Proof Records</span>
             </div>
             <div className="flex items-center gap-2 bg-card px-4 py-2 rounded-full shadow-card">
-              <Bluetooth className="h-4 w-4 text-primary" />
-              <span>Bluetooth Sync</span>
+              <RefreshCw className="h-4 w-4 text-primary" />
+              <span>P2P Sync</span>
             </div>
           </div>
         </section>
@@ -550,7 +549,7 @@ const Index = () => {
                 <Wifi className="h-4 w-4 mr-2" />
                 Sync
               </Button>
-              <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
+              <Button variant="outline" onClick={() => setIsImportOpen(true)}>
                 <Download className="h-4 w-4 mr-2" />
                 Import
               </Button>
@@ -575,7 +574,7 @@ const Index = () => {
                 Create your first farm project to start tracking records.
               </p>
               <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <Button variant="outline" onClick={() => setIsScannerOpen(true)}>
+                <Button variant="outline" onClick={() => setIsImportOpen(true)}>
                   <Download className="h-4 w-4 mr-2" />
                   Import Project
                 </Button>
@@ -609,9 +608,9 @@ const Index = () => {
         onSubmit={handleCreateProject}
       />
 
-      <BluetoothImportDialog
-        open={isScannerOpen}
-        onOpenChange={setIsScannerOpen}
+      <ImportDialog
+        open={isImportOpen}
+        onOpenChange={setIsImportOpen}
         onImportComplete={loadProjects}
       />
 
@@ -623,7 +622,7 @@ const Index = () => {
       />
 
       {shareProject && (
-        <BluetoothShareDialog
+        <ShareDialog
           open={!!shareProject}
           onOpenChange={() => setShareProject(null)}
           project={shareProject.project}
