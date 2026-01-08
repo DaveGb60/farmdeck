@@ -42,6 +42,7 @@ import {
   getDeviceId,
   ProjectSummary,
 } from '@/lib/webrtcSync';
+import { QRCodeScanner } from '@/components/QRCodeScanner';
 import {
   Wifi,
   WifiOff,
@@ -61,6 +62,8 @@ import {
   ArrowLeft,
   Clock,
   Database,
+  Camera,
+  ScanLine,
 } from 'lucide-react';
 
 type SyncPhase = 
@@ -100,6 +103,8 @@ export function P2PSyncDialog({
   const [pairingCode, setPairingCode] = useState<string>('');
   const [joinCode, setJoinCode] = useState<string>('');
   const [answerData, setAnswerData] = useState<string>('');
+  const [showScanner, setShowScanner] = useState(false);
+  const [joinMode, setJoinMode] = useState<'scan' | 'paste'>('scan');
   
   // Metadata & selection
   const [localMetadata, setLocalMetadata] = useState<SyncMetadata | null>(null);
@@ -252,23 +257,25 @@ export function P2PSyncDialog({
     }
   };
 
-  // Join session (joiner)
-  const handleJoinSession = async () => {
-    if (!joinCode.trim()) {
-      toast({ title: 'Please enter the pairing code or scan QR', variant: 'destructive' });
+  // Join session (joiner) - from scanned/pasted data
+  const handleJoinWithData = async (data: string) => {
+    const trimmedData = data.trim();
+    if (!trimmedData) {
+      toast({ title: 'Please scan QR or enter pairing data', variant: 'destructive' });
       return;
     }
 
     setPhase('joining');
     setIsInitiator(false);
+    setShowScanner(false);
 
     try {
       await buildLocalMetadata();
       const sync = initSync();
       
-      const parsed = parseSignalingData(joinCode.trim());
+      const parsed = parseSignalingData(trimmedData);
       if (!parsed) {
-        throw new Error('Invalid pairing code');
+        throw new Error('Invalid pairing data');
       }
 
       const answer = await sync.joinSession(parsed.offer);
@@ -282,15 +289,35 @@ export function P2PSyncDialog({
     }
   };
 
+  // Handle QR code scan result
+  const handleQRScan = (data: string) => {
+    setJoinCode(data);
+    handleJoinWithData(data);
+  };
+
+  // Handle QR scan for answer (initiator scanning joiner's response)
+  const handleAnswerScan = (data: string) => {
+    setAnswerData(data);
+    setShowScanner(false);
+    // Auto-connect after scanning answer
+    handleReceiveAnswerWithData(data);
+  };
+
+  // Join session (joiner) - manual button
+  const handleJoinSession = async () => {
+    await handleJoinWithData(joinCode);
+  };
+
   // Complete connection with answer (initiator receives answer)
-  const handleReceiveAnswer = async () => {
-    if (!answerData.trim() || !syncRef.current) {
-      toast({ title: 'Please enter the response code', variant: 'destructive' });
+  const handleReceiveAnswerWithData = async (data: string) => {
+    const trimmedData = data.trim();
+    if (!trimmedData || !syncRef.current) {
+      toast({ title: 'Please scan or enter the response code', variant: 'destructive' });
       return;
     }
 
     try {
-      const answer = parseAnswerData(answerData.trim());
+      const answer = parseAnswerData(trimmedData);
       if (!answer) {
         throw new Error('Invalid response code');
       }
@@ -300,6 +327,11 @@ export function P2PSyncDialog({
       setPhase('error');
       setErrorMessage('Failed to complete connection');
     }
+  };
+
+  // Complete connection with answer (initiator receives answer) - manual button
+  const handleReceiveAnswer = async () => {
+    await handleReceiveAnswerWithData(answerData);
   };
 
   // Toggle project selection
@@ -400,6 +432,8 @@ export function P2PSyncDialog({
     setPairingCode('');
     setJoinCode('');
     setAnswerData('');
+    setShowScanner(false);
+    setJoinMode('scan');
     setLocalMetadata(null);
     setRemoteMetadata(null);
     setSelectedProjects(new Set());
@@ -445,27 +479,48 @@ export function P2PSyncDialog({
             <span className="w-full border-t" />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">or</span>
+            <span className="bg-background px-2 text-muted-foreground">or join existing session</span>
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Input
-            placeholder="Paste pairing data or scan QR..."
-            value={joinCode}
-            onChange={(e) => setJoinCode(e.target.value)}
-            className="font-mono text-xs"
-          />
-          <Button 
-            onClick={handleJoinSession} 
-            variant="outline" 
-            className="w-full"
-            disabled={!joinCode.trim()}
-          >
-            <Keyboard className="h-4 w-4 mr-2" />
-            Join Session
-          </Button>
-        </div>
+        {/* Join Mode Tabs */}
+        <Tabs value={joinMode} onValueChange={(v) => setJoinMode(v as 'scan' | 'paste')}>
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="scan" className="gap-2">
+              <Camera className="h-4 w-4" />
+              Scan QR
+            </TabsTrigger>
+            <TabsTrigger value="paste" className="gap-2">
+              <Keyboard className="h-4 w-4" />
+              Paste Code
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="scan" className="mt-4">
+            <QRCodeScanner 
+              onScan={handleQRScan}
+              scanning={joinMode === 'scan' && phase === 'idle'}
+            />
+          </TabsContent>
+          
+          <TabsContent value="paste" className="mt-4 space-y-3">
+            <Input
+              placeholder="Paste pairing data here..."
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              className="font-mono text-xs"
+            />
+            <Button 
+              onClick={handleJoinSession} 
+              variant="outline" 
+              className="w-full"
+              disabled={!joinCode.trim()}
+            >
+              <Keyboard className="h-4 w-4 mr-2" />
+              Join Session
+            </Button>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );
@@ -479,48 +534,65 @@ export function P2PSyncDialog({
               <span className="font-mono font-bold text-lg tracking-widest">{pairingCode}</span>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
-              Share this QR code or pairing data with the other device
+              Let the other device scan this QR code
             </p>
           </div>
 
           <div className="flex justify-center">
-            <div className="bg-white p-4 rounded-lg">
+            <div className="bg-white p-4 rounded-lg shadow-md">
               <QRCodeSVG value={signalingData} size={200} />
             </div>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input 
-                value={signalingData} 
-                readOnly 
-                className="font-mono text-xs"
-              />
-              <Button 
-                variant="outline" 
-                size="icon"
-                onClick={() => copyToClipboard(signalingData)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
-            </div>
+          <div className="flex gap-2 justify-center">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => copyToClipboard(signalingData)}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Code
+            </Button>
           </div>
 
-          <div className="border-t pt-4 space-y-2">
+          <div className="border-t pt-4 space-y-3">
             <p className="text-sm text-muted-foreground text-center">
-              After the other device scans, paste their response here:
+              After the other device scans, get their response:
             </p>
-            <div className="flex gap-2">
-              <Input
-                placeholder="Paste response code..."
-                value={answerData}
-                onChange={(e) => setAnswerData(e.target.value)}
-                className="font-mono text-xs"
-              />
-              <Button onClick={handleReceiveAnswer} disabled={!answerData.trim()}>
-                Connect
-              </Button>
-            </div>
+            
+            <Tabs value={showScanner ? 'scan' : 'paste'} onValueChange={(v) => setShowScanner(v === 'scan')}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="scan" className="gap-2">
+                  <Camera className="h-4 w-4" />
+                  Scan Response
+                </TabsTrigger>
+                <TabsTrigger value="paste" className="gap-2">
+                  <Keyboard className="h-4 w-4" />
+                  Paste Response
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="scan" className="mt-3">
+                <QRCodeScanner 
+                  onScan={handleAnswerScan}
+                  scanning={showScanner && phase === 'waiting' && isInitiator}
+                />
+              </TabsContent>
+              
+              <TabsContent value="paste" className="mt-3 space-y-2">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Paste response code..."
+                    value={answerData}
+                    onChange={(e) => setAnswerData(e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                  <Button onClick={handleReceiveAnswer} disabled={!answerData.trim()}>
+                    Connect
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </>
       ) : (
@@ -529,25 +601,25 @@ export function P2PSyncDialog({
             <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-3" />
             <p className="font-medium">Session joined!</p>
             <p className="text-sm text-muted-foreground mt-2">
-              Share this response with the other device to complete connection
+              Let the other device scan this QR code to complete connection
             </p>
           </div>
 
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Input 
-                value={answerData} 
-                readOnly 
-                className="font-mono text-xs"
-              />
-              <Button 
-                variant="outline" 
-                size="icon"
-                onClick={() => copyToClipboard(answerData)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+          <div className="flex justify-center">
+            <div className="bg-white p-4 rounded-lg shadow-md">
+              <QRCodeSVG value={answerData} size={180} />
             </div>
+          </div>
+
+          <div className="flex gap-2 justify-center">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={() => copyToClipboard(answerData)}
+            >
+              <Copy className="h-4 w-4 mr-2" />
+              Copy Response
+            </Button>
           </div>
 
           <div className="flex items-center justify-center gap-2 text-muted-foreground">
