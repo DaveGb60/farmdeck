@@ -42,7 +42,6 @@ interface NewRecordState {
 interface BatchSaleState {
   isOpen: boolean;
   date: string;
-  selectedRecords: Set<string>;
   soldQuantity: string;
   revenue: string;
   comment: string;
@@ -85,7 +84,6 @@ export function DelayedRevenueRecordTable({
   const [batchSale, setBatchSale] = useState<BatchSaleState>({
     isOpen: false,
     date: new Date().toISOString().split('T')[0],
-    selectedRecords: new Set(),
     soldQuantity: '',
     revenue: '',
     comment: '',
@@ -105,17 +103,12 @@ export function DelayedRevenueRecordTable({
     });
   }, [records]);
 
-  // Calculate total available for sale from selected records
-  const selectedTotalAvailable = useMemo(() => {
-    let total = 0;
-    batchSale.selectedRecords.forEach(id => {
-      const record = records.find(r => r.id === id);
-      if (record) {
-        total += record.availableQuantity ?? record.produceAmount;
-      }
-    });
-    return total;
-  }, [batchSale.selectedRecords, records]);
+  // Calculate total available for sale from ALL available records (auto-calculate)
+  const totalAvailableForSale = useMemo(() => {
+    return availableForSale.reduce((sum, record) => {
+      return sum + (record.availableQuantity ?? record.produceAmount);
+    }, 0);
+  }, [availableForSale]);
 
   const toggleComment = (id: string) => {
     const newExpanded = new Set(expandedComments);
@@ -176,21 +169,10 @@ export function DelayedRevenueRecordTable({
     }
   };
 
-  const toggleRecordSelection = (recordId: string) => {
-    const newSelected = new Set(batchSale.selectedRecords);
-    if (newSelected.has(recordId)) {
-      newSelected.delete(recordId);
-    } else {
-      newSelected.add(recordId);
-    }
-    setBatchSale({ ...batchSale, selectedRecords: newSelected });
-  };
-
   const handleOpenBatchSale = () => {
     setBatchSale({
       isOpen: true,
       date: new Date().toISOString().split('T')[0],
-      selectedRecords: new Set(),
       soldQuantity: '',
       revenue: '',
       comment: '',
@@ -201,28 +183,26 @@ export function DelayedRevenueRecordTable({
     const soldQty = parseFloat(batchSale.soldQuantity) || 0;
     const revenue = parseFloat(batchSale.revenue) || 0;
 
-    if (soldQty <= 0 || revenue <= 0 || batchSale.selectedRecords.size === 0) {
+    if (soldQty <= 0 || revenue <= 0 || availableForSale.length === 0) {
       return;
     }
 
-    if (soldQty > selectedTotalAvailable) {
+    if (soldQty > totalAvailableForSale) {
       return;
     }
 
-    const sourceRecords = records.filter(r => batchSale.selectedRecords.has(r.id));
-
+    // Use ALL available records as source (auto-select)
     onBatchSale({
       date: batchSale.date,
       soldQuantity: soldQty,
       revenue,
-      sourceRecords,
+      sourceRecords: availableForSale,
       comment: batchSale.comment.trim(),
     });
 
     setBatchSale({
       isOpen: false,
       date: new Date().toISOString().split('T')[0],
-      selectedRecords: new Set(),
       soldQuantity: '',
       revenue: '',
       comment: '',
@@ -646,7 +626,7 @@ export function DelayedRevenueRecordTable({
               Record Batch Sale
             </DialogTitle>
             <DialogDescription>
-              Select inventory to sell, enter quantity sold and revenue. Unsold quantities will be carried forward.
+              Enter quantity sold and revenue. The system will automatically deduct from all available stock. Unsold quantities will be carried forward.
             </DialogDescription>
           </DialogHeader>
           
@@ -661,43 +641,17 @@ export function DelayedRevenueRecordTable({
               />
             </div>
 
-            {/* Select Records */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Select Stock to Sell</label>
-              <div className="border rounded-lg max-h-48 overflow-y-auto">
-                {availableForSale.map(record => {
-                  const available = record.availableQuantity ?? record.produceAmount;
-                  return (
-                    <div 
-                      key={record.id}
-                      className={cn(
-                        "flex items-center gap-3 p-3 border-b last:border-b-0 cursor-pointer hover:bg-muted/50",
-                        batchSale.selectedRecords.has(record.id) && "bg-primary/10"
-                      )}
-                      onClick={() => toggleRecordSelection(record.id)}
-                    >
-                      <Checkbox
-                        checked={batchSale.selectedRecords.has(record.id)}
-                        onCheckedChange={() => toggleRecordSelection(record.id)}
-                      />
-                      <div className="flex-1">
-                        <div className="text-sm font-medium">
-                          {format(new Date(record.date), 'MMM d, yyyy')}
-                          {record.item && <span className="text-muted-foreground ml-2">({record.item})</span>}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          Available: {available.toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+            {/* Available Stock Summary */}
+            <div className="p-3 bg-muted/50 rounded-lg space-y-2">
+              <label className="text-sm font-medium">Available Stock</label>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  From {availableForSale.length} record(s)
+                </span>
+                <span className="text-lg font-bold text-primary">
+                  {totalAvailableForSale.toLocaleString()} units
+                </span>
               </div>
-              {batchSale.selectedRecords.size > 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Total available from selected: <strong>{selectedTotalAvailable.toLocaleString()}</strong>
-                </p>
-              )}
             </div>
 
             {/* Quantity Sold */}
@@ -709,14 +663,14 @@ export function DelayedRevenueRecordTable({
                 value={batchSale.soldQuantity}
                 onChange={(e) => setBatchSale({ ...batchSale, soldQuantity: e.target.value })}
               />
-              {parseFloat(batchSale.soldQuantity) > selectedTotalAvailable && (
+              {parseFloat(batchSale.soldQuantity) > totalAvailableForSale && (
                 <p className="text-xs text-destructive">
-                  Cannot sell more than available ({selectedTotalAvailable.toLocaleString()})
+                  Cannot sell more than available ({totalAvailableForSale.toLocaleString()})
                 </p>
               )}
-              {parseFloat(batchSale.soldQuantity) < selectedTotalAvailable && parseFloat(batchSale.soldQuantity) > 0 && (
+              {parseFloat(batchSale.soldQuantity) < totalAvailableForSale && parseFloat(batchSale.soldQuantity) > 0 && (
                 <p className="text-xs text-warning">
-                  Remainder of {(selectedTotalAvailable - parseFloat(batchSale.soldQuantity)).toLocaleString()} will be carried forward
+                  Remainder of {(totalAvailableForSale - parseFloat(batchSale.soldQuantity)).toLocaleString()} will be carried forward
                 </p>
               )}
             </div>
@@ -751,10 +705,10 @@ export function DelayedRevenueRecordTable({
               variant="success"
               onClick={handleConfirmBatchSale}
               disabled={
-                batchSale.selectedRecords.size === 0 ||
+                availableForSale.length === 0 ||
                 parseFloat(batchSale.soldQuantity) <= 0 ||
                 parseFloat(batchSale.revenue) <= 0 ||
-                parseFloat(batchSale.soldQuantity) > selectedTotalAvailable
+                parseFloat(batchSale.soldQuantity) > totalAvailableForSale
               }
             >
               Confirm Sale

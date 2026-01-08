@@ -15,6 +15,7 @@ import { ColumnManagerDropdown, CustomColumn, ColumnType } from '@/components/Co
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +47,7 @@ import {
   updateProject,
   generateId,
 } from '@/lib/db';
+import { cn } from '@/lib/utils';
 import { Plus, ArrowLeft, Leaf, Database, Lock, Download, Share2, FileDown, ClipboardList, Table2, ChevronRight, Package, Zap, Wifi, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -349,9 +351,10 @@ const Index = () => {
 
   if (selectedProject) {
     return (
-      <div className="min-h-screen bg-gradient-earth">
-        <Header />
-        <main className="container px-4 py-6 space-y-6">
+      <TooltipProvider delayDuration={300}>
+        <div className="min-h-screen bg-gradient-earth">
+          <Header />
+          <main className="container px-4 py-6 space-y-6">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="icon" onClick={() => setSelectedProject(null)}>
@@ -424,21 +427,55 @@ const Index = () => {
                           <ChevronRight className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="bg-popover z-50">
-                        <DropdownMenuItem 
-                          onClick={() => handleChangeRecordType('standard')}
-                          className={selectedProject.recordType === 'standard' ? 'bg-accent' : ''}
-                        >
-                          <Zap className="h-4 w-4 mr-2" />
-                          Standard (Immediate Revenue)
-                        </DropdownMenuItem>
-                        <DropdownMenuItem 
-                          onClick={() => handleChangeRecordType('delayed_revenue')}
-                          className={selectedProject.recordType === 'delayed_revenue' ? 'bg-accent' : ''}
-                        >
-                          <Package className="h-4 w-4 mr-2" />
-                          Delayed Revenue (Batch Sales)
-                        </DropdownMenuItem>
+                      <DropdownMenuContent align="start" className="bg-popover z-50 w-72">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuItem 
+                              onClick={() => handleChangeRecordType('standard')}
+                              className={cn(
+                                "flex flex-col items-start gap-1 py-3",
+                                selectedProject.recordType === 'standard' && 'bg-accent'
+                              )}
+                            >
+                              <div className="flex items-center gap-2">
+                                <Zap className="h-4 w-4" />
+                                <span className="font-medium">Standard (Immediate Revenue)</span>
+                              </div>
+                              <span className="text-xs text-muted-foreground ml-6">
+                                Revenue recorded when production occurs
+                              </span>
+                            </DropdownMenuItem>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            <p className="text-sm">
+                              <strong>Standard Records:</strong> Use when revenue is received immediately upon production or harvest. Ideal for direct sales, daily market sales, or products sold on-the-spot.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <DropdownMenuItem 
+                              onClick={() => handleChangeRecordType('delayed_revenue')}
+                              className={cn(
+                                "flex flex-col items-start gap-1 py-3",
+                                selectedProject.recordType === 'delayed_revenue' && 'bg-accent'
+                              )}
+                            >
+                              <div className="flex items-center gap-2">
+                                <Package className="h-4 w-4" />
+                                <span className="font-medium">Delayed Revenue (Batch Sales)</span>
+                              </div>
+                              <span className="text-xs text-muted-foreground ml-6">
+                                Collect first, sell later in batches
+                              </span>
+                            </DropdownMenuItem>
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="max-w-xs">
+                            <p className="text-sm">
+                              <strong>Delayed Revenue:</strong> Use when products are collected/harvested but sold later (e.g., eggs, stored crops). Track quantities collected, then record batch sales when you sell. Unsold portions are carried forward automatically.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
                       </DropdownMenuContent>
                     </DropdownMenu>
                     {selectedProject.recordType === 'delayed_revenue' && (
@@ -503,6 +540,7 @@ const Index = () => {
           aggregations={aggregations}
         />
       </div>
+      </TooltipProvider>
     );
   }
 
@@ -600,6 +638,13 @@ const Index = () => {
             </div>
           )}
         </section>
+
+        {/* Footer Branding */}
+        <footer className="mt-16 pb-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            Made by <span className="font-semibold text-primary">Gfibion Genesis</span>
+          </p>
+        </footer>
       </main>
 
       <CreateProjectDialog
