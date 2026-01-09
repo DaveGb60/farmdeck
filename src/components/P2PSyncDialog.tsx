@@ -486,17 +486,17 @@ export function P2PSyncDialog({
   }, []);
 
   const renderIdlePhase = () => (
-    <div className="space-y-6">
-      <div className="text-center py-4">
-        <Wifi className="h-12 w-12 mx-auto text-primary mb-3" />
-        <p className="text-muted-foreground">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="text-center py-2 sm:py-4">
+        <Wifi className="h-10 w-10 sm:h-12 sm:w-12 mx-auto text-primary mb-2 sm:mb-3" />
+        <p className="text-xs sm:text-sm text-muted-foreground">
           Sync data directly between devices using peer-to-peer connection
         </p>
       </div>
 
-      <div className="grid gap-4">
-        <Button onClick={handleCreateSession} className="w-full h-16 text-lg">
-          <QrCode className="h-5 w-5 mr-3" />
+      <div className="grid gap-3 sm:gap-4">
+        <Button onClick={handleCreateSession} className="w-full h-12 sm:h-16 text-sm sm:text-lg">
+          <QrCode className="h-4 w-4 sm:h-5 sm:w-5 mr-2 sm:mr-3" />
           Create Sync Session
         </Button>
         
@@ -512,24 +512,24 @@ export function P2PSyncDialog({
         {/* Join Mode Tabs */}
         <Tabs value={joinMode} onValueChange={(v) => setJoinMode(v as 'scan' | 'paste')}>
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="scan" className="gap-2">
-              <Camera className="h-4 w-4" />
+            <TabsTrigger value="scan" className="gap-1 sm:gap-2 text-xs sm:text-sm">
+              <Camera className="h-3 w-3 sm:h-4 sm:w-4" />
               Scan QR
             </TabsTrigger>
-            <TabsTrigger value="paste" className="gap-2">
-              <Keyboard className="h-4 w-4" />
+            <TabsTrigger value="paste" className="gap-1 sm:gap-2 text-xs sm:text-sm">
+              <Keyboard className="h-3 w-3 sm:h-4 sm:w-4" />
               Paste Code
             </TabsTrigger>
           </TabsList>
           
-          <TabsContent value="scan" className="mt-4">
+          <TabsContent value="scan" className="mt-3 sm:mt-4">
             <QRCodeScanner 
               onScan={handleQRScan}
               scanning={joinMode === 'scan' && phase === 'idle'}
             />
           </TabsContent>
           
-          <TabsContent value="paste" className="mt-4 space-y-3">
+          <TabsContent value="paste" className="mt-3 sm:mt-4 space-y-2 sm:space-y-3">
             <Input
               placeholder="Paste pairing data here..."
               value={joinCode}
@@ -539,7 +539,7 @@ export function P2PSyncDialog({
             <Button 
               onClick={handleJoinSession} 
               variant="outline" 
-              className="w-full"
+              className="w-full text-sm"
               disabled={!joinCode.trim()}
             >
               <Keyboard className="h-4 w-4 mr-2" />
@@ -552,21 +552,22 @@ export function P2PSyncDialog({
   );
 
   const renderWaitingPhase = () => (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {isInitiator ? (
         <>
-          <div className="text-center py-4">
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 rounded-full mb-4">
-              <span className="font-mono font-bold text-lg tracking-widest">{pairingCode}</span>
+          <div className="text-center py-2 sm:py-4">
+            <div className="inline-flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-primary/10 rounded-full mb-3 sm:mb-4">
+              <span className="font-mono font-bold text-base sm:text-lg tracking-widest">{pairingCode}</span>
             </div>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p className="text-xs sm:text-sm text-muted-foreground mb-3 sm:mb-4">
               Let the other device scan this QR code
             </p>
           </div>
 
           <div className="flex justify-center">
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <QRCodeSVG value={signalingData} size={200} />
+            <div className="bg-white p-2 sm:p-4 rounded-lg shadow-md">
+              <QRCodeSVG value={signalingData} size={160} className="sm:hidden" />
+              <QRCodeSVG value={signalingData} size={200} className="hidden sm:block" />
             </div>
           </div>
 
@@ -575,37 +576,38 @@ export function P2PSyncDialog({
               variant="outline" 
               size="sm"
               onClick={() => copyToClipboard(signalingData)}
+              className="text-xs sm:text-sm"
             >
-              <Copy className="h-4 w-4 mr-2" />
+              <Copy className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
               Copy Code
             </Button>
           </div>
 
-          <div className="border-t pt-4 space-y-3">
-            <p className="text-sm text-muted-foreground text-center">
+          <div className="border-t pt-3 sm:pt-4 space-y-2 sm:space-y-3">
+            <p className="text-xs sm:text-sm text-muted-foreground text-center">
               After the other device scans, get their response:
             </p>
             
             <Tabs value={showScanner ? 'scan' : 'paste'} onValueChange={(v) => setShowScanner(v === 'scan')}>
               <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="scan" className="gap-2">
-                  <Camera className="h-4 w-4" />
+                <TabsTrigger value="scan" className="gap-1 sm:gap-2 text-xs sm:text-sm">
+                  <Camera className="h-3 w-3 sm:h-4 sm:w-4" />
                   Scan Response
                 </TabsTrigger>
-                <TabsTrigger value="paste" className="gap-2">
-                  <Keyboard className="h-4 w-4" />
+                <TabsTrigger value="paste" className="gap-1 sm:gap-2 text-xs sm:text-sm">
+                  <Keyboard className="h-3 w-3 sm:h-4 sm:w-4" />
                   Paste Response
                 </TabsTrigger>
               </TabsList>
               
-              <TabsContent value="scan" className="mt-3">
+              <TabsContent value="scan" className="mt-2 sm:mt-3">
                 <QRCodeScanner 
                   onScan={handleAnswerScan}
                   scanning={showScanner && phase === 'waiting' && isInitiator}
                 />
               </TabsContent>
               
-              <TabsContent value="paste" className="mt-3 space-y-2">
+              <TabsContent value="paste" className="mt-2 sm:mt-3 space-y-2">
                 <div className="flex gap-2">
                   <Input
                     placeholder="Paste response code..."
@@ -613,7 +615,7 @@ export function P2PSyncDialog({
                     onChange={(e) => setAnswerData(e.target.value)}
                     className="font-mono text-xs"
                   />
-                  <Button onClick={handleReceiveAnswer} disabled={!answerData.trim()}>
+                  <Button onClick={handleReceiveAnswer} disabled={!answerData.trim()} size="sm">
                     Connect
                   </Button>
                 </div>
@@ -623,17 +625,18 @@ export function P2PSyncDialog({
         </>
       ) : (
         <>
-          <div className="text-center py-4">
-            <CheckCircle2 className="h-12 w-12 mx-auto text-green-500 mb-3" />
-            <p className="font-medium">Session joined!</p>
-            <p className="text-sm text-muted-foreground mt-2">
+          <div className="text-center py-2 sm:py-4">
+            <CheckCircle2 className="h-10 w-10 sm:h-12 sm:w-12 mx-auto text-green-500 mb-2 sm:mb-3" />
+            <p className="font-medium text-sm sm:text-base">Session joined!</p>
+            <p className="text-xs sm:text-sm text-muted-foreground mt-1 sm:mt-2">
               Let the other device scan this QR code to complete connection
             </p>
           </div>
 
           <div className="flex justify-center">
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <QRCodeSVG value={answerData} size={180} />
+            <div className="bg-white p-2 sm:p-4 rounded-lg shadow-md">
+              <QRCodeSVG value={answerData} size={140} className="sm:hidden" />
+              <QRCodeSVG value={answerData} size={180} className="hidden sm:block" />
             </div>
           </div>
 
@@ -642,15 +645,16 @@ export function P2PSyncDialog({
               variant="outline" 
               size="sm"
               onClick={() => copyToClipboard(answerData)}
+              className="text-xs sm:text-sm"
             >
-              <Copy className="h-4 w-4 mr-2" />
+              <Copy className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2" />
               Copy Response
             </Button>
           </div>
 
           <div className="flex items-center justify-center gap-2 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Waiting for connection...</span>
+            <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 animate-spin" />
+            <span className="text-xs sm:text-sm">Waiting for connection...</span>
           </div>
         </>
       )}
@@ -873,13 +877,13 @@ export function P2PSyncDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-[95vw] sm:max-w-md max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="font-serif flex items-center gap-2">
-              <Wifi className="h-5 w-5" />
+            <DialogTitle className="font-serif flex items-center gap-2 text-base sm:text-lg">
+              <Wifi className="h-4 w-4 sm:h-5 sm:w-5" />
               P2P Data Sync
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-xs sm:text-sm">
               {phase === 'idle' && 'Sync projects directly between devices'}
               {phase === 'creating' && 'Creating session...'}
               {phase === 'waiting' && 'Waiting for connection...'}
@@ -893,18 +897,18 @@ export function P2PSyncDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="py-4">
+          <div className="py-2 sm:py-4">
             {phase === 'idle' && renderIdlePhase()}
             {(phase === 'creating' || phase === 'joining') && (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <div className="flex items-center justify-center py-8 sm:py-12">
+                <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-primary" />
               </div>
             )}
             {phase === 'waiting' && renderWaitingPhase()}
             {(phase === 'connected' || phase === 'metadata') && (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <span className="text-sm text-muted-foreground">Exchanging metadata...</span>
+              <div className="flex flex-col items-center justify-center py-8 sm:py-12 gap-2 sm:gap-3">
+                <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-primary" />
+                <span className="text-xs sm:text-sm text-muted-foreground">Exchanging metadata...</span>
               </div>
             )}
             {phase === 'selecting' && renderSelectingPhase()}
@@ -914,12 +918,12 @@ export function P2PSyncDialog({
           </div>
 
           {phase !== 'idle' && phase !== 'complete' && phase !== 'error' && phase !== 'cancelled' && (
-            <div className="flex justify-between items-center pt-4 border-t">
-              <Button variant="ghost" size="sm" onClick={handleReset}>
+            <div className="flex justify-between items-center pt-3 sm:pt-4 border-t">
+              <Button variant="ghost" size="sm" onClick={handleReset} className="text-xs sm:text-sm">
                 Start Over
               </Button>
               {phase === 'selecting' && (
-                <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+                <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)} className="text-xs sm:text-sm">
                   Cancel
                 </Button>
               )}
