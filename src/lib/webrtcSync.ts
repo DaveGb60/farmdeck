@@ -534,7 +534,7 @@ export function detectConflicts(
   return conflicts;
 }
 
-// Apply sync data to local database
+// Apply sync data to local database with proper deduplication
 export async function applySyncData(
   data: SyncDataPayload,
   conflictResolution: 'keep_local' | 'keep_remote' | 'keep_newer' = 'keep_newer',
@@ -578,12 +578,49 @@ export async function applySyncData(
     }
   }
 
+  // Get existing records for all projects being synced to detect duplicates
+  const existingRecordIds = new Set<string>();
+  const existingRecordsMap = new Map<string, FarmRecord>();
+  
+  for (const project of data.projects) {
+    const existingRecords = await getRecordsByProject(project.id);
+    for (const record of existingRecords) {
+      existingRecordIds.add(record.id);
+      existingRecordsMap.set(record.id, record);
+    }
+  }
+
   for (const record of data.records) {
-    try {
-      await importRecord(record);
-    } catch {
-      // Record might be locked or already exists
-      skipped++;
+    const existingRecord = existingRecordsMap.get(record.id);
+    
+    if (existingRecord) {
+      // Record exists - check if we should update it
+      if (existingRecord.isLocked) {
+        // Never overwrite locked records
+        skipped++;
+        continue;
+      }
+      
+      const incomingTime = new Date(record.updatedAt).getTime();
+      const existingTime = new Date(existingRecord.updatedAt).getTime();
+      
+      // Only update if incoming is newer
+      if (incomingTime > existingTime) {
+        try {
+          await importRecord(record);
+        } catch {
+          skipped++;
+        }
+      } else {
+        skipped++;
+      }
+    } else {
+      // New record - import it
+      try {
+        await importRecord(record);
+      } catch {
+        skipped++;
+      }
     }
   }
 
