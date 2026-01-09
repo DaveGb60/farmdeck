@@ -239,21 +239,32 @@ export function P2PSyncDialog({
 
   // Create session (initiator)
   const handleCreateSession = async () => {
-    setPhase('creating');
-    setIsInitiator(true);
-    
     try {
+      setPhase('creating');
+      setIsInitiator(true);
+      setErrorMessage('');
+      
       await buildLocalMetadata();
       const sync = initSync();
+      
+      if (!sync) {
+        throw new Error('Failed to initialize sync');
+      }
+      
       const { offer, pairingCode: code } = await sync.createSession();
+      
+      if (!offer || !code) {
+        throw new Error('Failed to create session');
+      }
       
       const encoded = createSignalingData(offer, code);
       setSignalingData(encoded);
       setPairingCode(code);
       setPhase('waiting');
     } catch (error) {
+      console.error('[P2PSync] Create session error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to create session');
       setPhase('error');
-      setErrorMessage('Failed to create session');
     }
   };
 
@@ -265,38 +276,51 @@ export function P2PSyncDialog({
       return;
     }
 
-    setPhase('joining');
-    setIsInitiator(false);
-    setShowScanner(false);
-
     try {
+      setPhase('joining');
+      setIsInitiator(false);
+      setShowScanner(false);
+      setErrorMessage('');
+
       await buildLocalMetadata();
       const sync = initSync();
       
+      if (!sync) {
+        throw new Error('Failed to initialize sync');
+      }
+      
       const parsed = parseSignalingData(trimmedData);
       if (!parsed) {
-        throw new Error('Invalid pairing data');
+        throw new Error('Invalid pairing data - please try again');
       }
 
       const answer = await sync.joinSession(parsed.offer);
+      
+      if (!answer) {
+        throw new Error('Failed to create answer');
+      }
+      
       const encodedAnswer = createAnswerData(answer);
       setAnswerData(encodedAnswer);
       setPairingCode(parsed.pairingCode);
       setPhase('waiting');
     } catch (error) {
-      setPhase('error');
+      console.error('[P2PSync] Join session error:', error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to join session');
+      setPhase('error');
     }
   };
 
   // Handle QR code scan result
   const handleQRScan = (data: string) => {
+    if (!data || phase !== 'idle') return;
     setJoinCode(data);
     handleJoinWithData(data);
   };
 
   // Handle QR scan for answer (initiator scanning joiner's response)
   const handleAnswerScan = (data: string) => {
+    if (!data || phase !== 'waiting' || !isInitiator) return;
     setAnswerData(data);
     setShowScanner(false);
     // Auto-connect after scanning answer
@@ -319,13 +343,15 @@ export function P2PSyncDialog({
     try {
       const answer = parseAnswerData(trimmedData);
       if (!answer) {
-        throw new Error('Invalid response code');
+        throw new Error('Invalid response code - please try again');
       }
 
       await syncRef.current.completeConnection(answer);
+      // Phase will transition via the connection state callback
     } catch (error) {
+      console.error('[P2PSync] Complete connection error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to complete connection');
       setPhase('error');
-      setErrorMessage('Failed to complete connection');
     }
   };
 

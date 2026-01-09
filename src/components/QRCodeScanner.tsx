@@ -7,9 +7,10 @@ interface QRCodeScannerProps {
   onScan: (data: string) => void;
   onError?: (error: string) => void;
   scanning?: boolean;
+  autoStart?: boolean; // New prop - default false, user must click to start
 }
 
-export function QRCodeScanner({ onScan, onError, scanning = true }: QRCodeScannerProps) {
+export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = false }: QRCodeScannerProps) {
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScanning, setIsScanning] = useState(false);
@@ -17,6 +18,7 @@ export function QRCodeScanner({ onScan, onError, scanning = true }: QRCodeScanne
   const [error, setError] = useState<string | null>(null);
   const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
+  const [userInitiated, setUserInitiated] = useState(autoStart);
   const mountedRef = useRef(true);
 
   const stopScanner = useCallback(async () => {
@@ -116,24 +118,31 @@ export function QRCodeScanner({ onScan, onError, scanning = true }: QRCodeScanne
   const retryPermission = useCallback(() => {
     setError(null);
     setHasPermission(null);
+    setUserInitiated(true);
     startScanner();
   }, [startScanner]);
 
-  // Start/stop based on scanning prop
+  const handleStartScanning = useCallback(() => {
+    setUserInitiated(true);
+    startScanner();
+  }, [startScanner]);
+
+  // Start/stop based on scanning prop AND user initiation
   useEffect(() => {
     mountedRef.current = true;
     
-    if (scanning) {
+    if (scanning && userInitiated) {
       startScanner();
-    } else {
+    } else if (!scanning) {
       stopScanner();
+      setUserInitiated(autoStart); // Reset when scanning is disabled
     }
 
     return () => {
       mountedRef.current = false;
       stopScanner();
     };
-  }, [scanning, startScanner, stopScanner]);
+  }, [scanning, userInitiated, autoStart, startScanner, stopScanner]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -166,6 +175,27 @@ export function QRCodeScanner({ onScan, onError, scanning = true }: QRCodeScanne
     );
   }
 
+  // Show "Start Scanning" button if user hasn't initiated yet
+  if (!userInitiated && scanning) {
+    return (
+      <div className="flex flex-col items-center justify-center p-8 bg-muted/50 rounded-lg border-2 border-dashed gap-4">
+        <div className="p-4 rounded-full bg-primary/10">
+          <Camera className="h-10 w-10 text-primary" />
+        </div>
+        <div className="text-center">
+          <p className="font-medium">Ready to Scan</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Tap the button below to open your camera
+          </p>
+        </div>
+        <Button onClick={handleStartScanning} className="gap-2">
+          <Camera className="h-4 w-4" />
+          Start Camera
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div 
@@ -175,7 +205,7 @@ export function QRCodeScanner({ onScan, onError, scanning = true }: QRCodeScanne
       >
         <div id="qr-scanner-container" className="w-full" />
         
-        {!isScanning && hasPermission === null && (
+        {!isScanning && hasPermission === null && userInitiated && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-muted">
             <Camera className="h-10 w-10 text-muted-foreground animate-pulse" />
             <p className="text-sm text-muted-foreground">Starting camera...</p>

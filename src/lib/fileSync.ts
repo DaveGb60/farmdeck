@@ -49,6 +49,7 @@ export async function calculateSyncDiff(
 ): Promise<{
   newRecords: FarmRecord[];
   existingRecords: FarmRecord[];
+  existingRecordDetails?: FarmRecord[];
   projectExists: boolean;
 }> {
   const existingProject = await getProject(incomingData.project.id);
@@ -58,6 +59,7 @@ export async function calculateSyncDiff(
     return {
       newRecords: incomingData.records,
       existingRecords: [],
+      existingRecordDetails: [],
       projectExists: false,
     };
   }
@@ -71,11 +73,12 @@ export async function calculateSyncDiff(
   return {
     newRecords,
     existingRecords: alreadyExisting,
+    existingRecordDetails: existingRecords, // Include full existing records for comparison
     projectExists: true,
   };
 }
 
-// Import sync data into database
+// Import sync data into database with proper deduplication
 export async function importSyncData(data: SyncData): Promise<SyncResult> {
   try {
     const diff = await calculateSyncDiff(data);
@@ -85,8 +88,9 @@ export async function importSyncData(data: SyncData): Promise<SyncResult> {
     
     let importedCount = 0;
     let skippedCount = 0;
+    let updatedCount = 0;
     
-    // Import new records
+    // Import only new records (not already existing)
     for (const record of diff.newRecords) {
       try {
         await importRecord(record);
@@ -96,15 +100,36 @@ export async function importSyncData(data: SyncData): Promise<SyncResult> {
       }
     }
     
-    // Count existing records that were skipped
-    skippedCount += diff.existingRecords.length;
+    // For existing records, optionally update if incoming is newer
+    for (const incomingRecord of diff.existingRecords) {
+      const existingRecord = diff.existingRecordDetails?.find(r => r.id === incomingRecord.id);
+      if (existingRecord) {
+        const incomingTime = new Date(incomingRecord.updatedAt).getTime();
+        const existingTime = new Date(existingRecord.updatedAt).getTime();
+        
+        // Only update if incoming is newer and existing is not locked
+        if (incomingTime > existingTime && !existingRecord.isLocked) {
+          try {
+            await importRecord(incomingRecord);
+            updatedCount++;
+          } catch {
+            skippedCount++;
+          }
+        } else {
+          skippedCount++;
+        }
+      } else {
+        skippedCount++;
+      }
+    }
     
     return {
       success: true,
       message: diff.projectExists 
-        ? `Synced ${importedCount} new records to existing project`
+        ? `Synced ${importedCount} new, ${updatedCount} updated records`
         : `Imported project with ${importedCount} records`,
       newRecords: importedCount,
+      updatedRecords: updatedCount,
       skippedRecords: skippedCount,
     };
   } catch (error) {
