@@ -83,8 +83,13 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
         },
         (decodedText) => {
           if (mountedRef.current) {
-            onScan(decodedText);
-            stopScanner();
+            console.log('[QRScanner] Successfully scanned:', decodedText.substring(0, 50) + '...');
+            // Stop scanner first, then call onScan
+            stopScanner().then(() => {
+              if (mountedRef.current) {
+                onScan(decodedText);
+              }
+            });
           }
         },
         () => {

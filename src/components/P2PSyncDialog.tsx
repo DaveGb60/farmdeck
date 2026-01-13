@@ -269,7 +269,7 @@ export function P2PSyncDialog({
   };
 
   // Join session (joiner) - from scanned/pasted data
-  const handleJoinWithData = async (data: string) => {
+  const handleJoinWithData = useCallback(async (data: string): Promise<void> => {
     const trimmedData = data.trim();
     if (!trimmedData) {
       toast({ title: 'Please scan QR or enter pairing data', variant: 'destructive' });
@@ -277,6 +277,7 @@ export function P2PSyncDialog({
     }
 
     try {
+      console.log('[P2PSync] Starting join with data...');
       setPhase('joining');
       setIsInitiator(false);
       setShowScanner(false);
@@ -289,51 +290,34 @@ export function P2PSyncDialog({
         throw new Error('Failed to initialize sync');
       }
       
+      console.log('[P2PSync] Parsing signaling data...');
       const parsed = parseSignalingData(trimmedData);
       if (!parsed) {
         throw new Error('Invalid pairing data - please try again');
       }
 
+      console.log('[P2PSync] Joining session with offer...');
       const answer = await sync.joinSession(parsed.offer);
       
       if (!answer) {
         throw new Error('Failed to create answer');
       }
       
+      console.log('[P2PSync] Creating answer data...');
       const encodedAnswer = createAnswerData(answer);
       setAnswerData(encodedAnswer);
       setPairingCode(parsed.pairingCode);
       setPhase('waiting');
+      console.log('[P2PSync] Join successful, waiting for connection completion');
     } catch (error) {
       console.error('[P2PSync] Join session error:', error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to join session');
       setPhase('error');
     }
-  };
-
-  // Handle QR code scan result
-  const handleQRScan = (data: string) => {
-    if (!data || phase !== 'idle') return;
-    setJoinCode(data);
-    handleJoinWithData(data);
-  };
-
-  // Handle QR scan for answer (initiator scanning joiner's response)
-  const handleAnswerScan = (data: string) => {
-    if (!data || phase !== 'waiting' || !isInitiator) return;
-    setAnswerData(data);
-    setShowScanner(false);
-    // Auto-connect after scanning answer
-    handleReceiveAnswerWithData(data);
-  };
-
-  // Join session (joiner) - manual button
-  const handleJoinSession = async () => {
-    await handleJoinWithData(joinCode);
-  };
+  }, [buildLocalMetadata, initSync, toast]);
 
   // Complete connection with answer (initiator receives answer)
-  const handleReceiveAnswerWithData = async (data: string) => {
+  const handleReceiveAnswerWithData = useCallback(async (data: string): Promise<void> => {
     const trimmedData = data.trim();
     if (!trimmedData || !syncRef.current) {
       toast({ title: 'Please scan or enter the response code', variant: 'destructive' });
@@ -341,18 +325,86 @@ export function P2PSyncDialog({
     }
 
     try {
+      console.log('[P2PSync] Parsing answer data...');
       const answer = parseAnswerData(trimmedData);
       if (!answer) {
         throw new Error('Invalid response code - please try again');
       }
 
+      console.log('[P2PSync] Completing connection with answer...');
       await syncRef.current.completeConnection(answer);
+      console.log('[P2PSync] Connection completion initiated');
       // Phase will transition via the connection state callback
     } catch (error) {
       console.error('[P2PSync] Complete connection error:', error);
       setErrorMessage(error instanceof Error ? error.message : 'Failed to complete connection');
       setPhase('error');
     }
+  }, [toast]);
+
+  // Handle QR code scan result - use ref to prevent duplicate processing
+  const scanProcessingRef = useRef(false);
+  
+  const handleQRScan = useCallback((data: string) => {
+    // Prevent duplicate processing and check phase
+    if (!data || scanProcessingRef.current || phase !== 'idle') {
+      console.log('[P2PSync] Ignoring scan - already processing or wrong phase:', { data: !!data, processing: scanProcessingRef.current, phase });
+      return;
+    }
+    
+    scanProcessingRef.current = true;
+    console.log('[P2PSync] Processing QR scan for join');
+    
+    try {
+      setJoinCode(data);
+      handleJoinWithData(data).finally(() => {
+        // Reset processing flag after operation completes (success or error)
+        setTimeout(() => {
+          scanProcessingRef.current = false;
+        }, 1000);
+      });
+    } catch (error) {
+      console.error('[P2PSync] QR scan error:', error);
+      scanProcessingRef.current = false;
+      setPhase('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to process QR code');
+    }
+  }, [phase, handleJoinWithData]);
+
+  // Handle QR scan for answer (initiator scanning joiner's response)
+  const answerProcessingRef = useRef(false);
+  
+  const handleAnswerScan = useCallback((data: string) => {
+    // Prevent duplicate processing
+    if (!data || answerProcessingRef.current || phase !== 'waiting' || !isInitiator) {
+      console.log('[P2PSync] Ignoring answer scan - already processing or wrong phase');
+      return;
+    }
+    
+    answerProcessingRef.current = true;
+    console.log('[P2PSync] Processing QR scan for answer');
+    
+    try {
+      setAnswerData(data);
+      setShowScanner(false);
+      
+      // Auto-connect after scanning answer
+      handleReceiveAnswerWithData(data).finally(() => {
+        setTimeout(() => {
+          answerProcessingRef.current = false;
+        }, 1000);
+      });
+    } catch (error) {
+      console.error('[P2PSync] Answer scan error:', error);
+      answerProcessingRef.current = false;
+      setPhase('error');
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to process answer');
+    }
+  }, [phase, isInitiator, handleReceiveAnswerWithData]);
+
+  // Join session (joiner) - manual button
+  const handleJoinSession = async () => {
+    await handleJoinWithData(joinCode);
   };
 
   // Complete connection with answer (initiator receives answer) - manual button
@@ -452,6 +504,10 @@ export function P2PSyncDialog({
       syncRef.current.close();
       syncRef.current = null;
     }
+    // Reset processing refs
+    scanProcessingRef.current = false;
+    answerProcessingRef.current = false;
+    
     setPhase('idle');
     setIsInitiator(false);
     setSignalingData('');
@@ -900,8 +956,11 @@ export function P2PSyncDialog({
           <div className="py-2 sm:py-4">
             {phase === 'idle' && renderIdlePhase()}
             {(phase === 'creating' || phase === 'joining') && (
-              <div className="flex items-center justify-center py-8 sm:py-12">
+              <div className="flex flex-col items-center justify-center py-8 sm:py-12 gap-2 sm:gap-3">
                 <Loader2 className="h-6 w-6 sm:h-8 sm:w-8 animate-spin text-primary" />
+                <span className="text-xs sm:text-sm text-muted-foreground">
+                  {phase === 'creating' ? 'Creating session...' : 'Joining session...'}
+                </span>
               </div>
             )}
             {phase === 'waiting' && renderWaitingPhase()}
