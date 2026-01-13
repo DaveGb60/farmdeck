@@ -101,6 +101,8 @@ export class WebRTCSync {
   private isInitiator: boolean = false;
   private receivedChunks: string[] = [];
   private expectedChunks: number = 0;
+  private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
+  private readonly CONNECTION_TIMEOUT_MS = 30000; // 30 seconds
   
   // Callbacks
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
@@ -125,13 +127,40 @@ export class WebRTCSync {
     this.pc = new RTCPeerConnection(config);
     this.setupPeerConnectionHandlers();
   }
+  
+  // Start connection timeout
+  private startConnectionTimeout(): void {
+    this.clearConnectionTimeout();
+    this.connectionTimeout = setTimeout(() => {
+      console.error('[WebRTC] Connection timeout - no connection established');
+      this.onError?.('Connection timeout - please try again');
+      this.close();
+    }, this.CONNECTION_TIMEOUT_MS);
+  }
+  
+  // Clear connection timeout
+  private clearConnectionTimeout(): void {
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+  }
 
   private setupPeerConnectionHandlers() {
     if (!this.pc) return;
 
     this.pc.onconnectionstatechange = () => {
-      console.log('[WebRTC] Connection state:', this.pc?.connectionState);
-      this.onConnectionStateChange?.(this.pc?.connectionState || 'closed');
+      const state = this.pc?.connectionState || 'closed';
+      console.log('[WebRTC] Connection state:', state);
+      
+      // Clear timeout on successful connection or failure
+      if (state === 'connected') {
+        this.clearConnectionTimeout();
+      } else if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+        this.clearConnectionTimeout();
+      }
+      
+      this.onConnectionStateChange?.(state);
     };
 
     this.pc.oniceconnectionstatechange = () => {
@@ -270,6 +299,9 @@ export class WebRTCSync {
     this.isInitiator = true;
     this.pairingCode = generatePairingCode();
     
+    // Start connection timeout
+    this.startConnectionTimeout();
+    
     // Create data channel before offer
     this.dc = this.pc.createDataChannel('sync', {
       ordered: true,
@@ -294,6 +326,9 @@ export class WebRTCSync {
     if (!this.pc) throw new Error('PeerConnection not initialized');
     
     this.isInitiator = false;
+    
+    // Start connection timeout
+    this.startConnectionTimeout();
     
     await this.pc.setRemoteDescription(offer);
     const answer = await this.pc.createAnswer();
@@ -466,6 +501,8 @@ export class WebRTCSync {
 
   // Close connection
   close(): void {
+    this.clearConnectionTimeout();
+    
     if (this.dc) {
       this.dc.close();
       this.dc = null;
@@ -474,6 +511,9 @@ export class WebRTCSync {
       this.pc.close();
       this.pc = null;
     }
+    
+    this.receivedChunks = [];
+    this.expectedChunks = 0;
   }
 
   // Get connection state
@@ -643,12 +683,27 @@ export function createSignalingData(
 // Parse signaling data from QR code
 export function parseSignalingData(encoded: string): { offer: RTCSessionDescriptionInit; pairingCode: string } | null {
   try {
-    const data = JSON.parse(atob(encoded));
+    // Handle potential whitespace or newlines
+    const cleanedData = encoded.trim().replace(/\s/g, '');
+    if (!cleanedData) {
+      console.error('[WebRTC] Empty signaling data');
+      return null;
+    }
+    
+    const decoded = atob(cleanedData);
+    const data = JSON.parse(decoded);
+    
+    if (!data.o || !data.t || !data.c) {
+      console.error('[WebRTC] Invalid signaling data structure');
+      return null;
+    }
+    
     return {
       offer: { sdp: data.o, type: data.t },
       pairingCode: data.c
     };
-  } catch {
+  } catch (error) {
+    console.error('[WebRTC] Failed to parse signaling data:', error);
     return null;
   }
 }
@@ -665,9 +720,24 @@ export function createAnswerData(answer: RTCSessionDescriptionInit): string {
 // Parse answer signaling data
 export function parseAnswerData(encoded: string): RTCSessionDescriptionInit | null {
   try {
-    const data = JSON.parse(atob(encoded));
+    // Handle potential whitespace or newlines
+    const cleanedData = encoded.trim().replace(/\s/g, '');
+    if (!cleanedData) {
+      console.error('[WebRTC] Empty answer data');
+      return null;
+    }
+    
+    const decoded = atob(cleanedData);
+    const data = JSON.parse(decoded);
+    
+    if (!data.a || !data.t) {
+      console.error('[WebRTC] Invalid answer data structure');
+      return null;
+    }
+    
     return { sdp: data.a, type: data.t };
-  } catch {
+  } catch (error) {
+    console.error('[WebRTC] Failed to parse answer data:', error);
     return null;
   }
 }

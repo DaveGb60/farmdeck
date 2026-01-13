@@ -98,6 +98,7 @@ export function P2PSyncDialog({
   
   // Connection state
   const [phase, setPhase] = useState<SyncPhase>('idle');
+  const phaseRef = useRef<SyncPhase>('idle'); // Ref to track current phase for callbacks
   const [isInitiator, setIsInitiator] = useState(false);
   const [signalingData, setSignalingData] = useState<string>('');
   const [pairingCode, setPairingCode] = useState<string>('');
@@ -119,6 +120,11 @@ export function P2PSyncDialog({
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [syncResult, setSyncResult] = useState<{ imported: number; skipped: number; conflicts: number } | null>(null);
+
+  // Keep phase ref in sync
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   // Build local metadata
   const buildLocalMetadata = useCallback(async () => {
@@ -164,7 +170,9 @@ export function P2PSyncDialog({
       if (state === 'connected') {
         setPhase('connected');
       } else if (state === 'failed' || state === 'disconnected') {
-        if (phase !== 'complete' && phase !== 'cancelled') {
+        // Use ref to get current phase to avoid stale closure
+        const currentPhase = phaseRef.current;
+        if (currentPhase !== 'complete' && currentPhase !== 'cancelled' && currentPhase !== 'error') {
           setPhase('error');
           setErrorMessage('Connection lost');
         }
@@ -222,6 +230,7 @@ export function P2PSyncDialog({
           description: `Imported ${result.imported} project(s), ${result.skipped} skipped`
         });
       } catch (error) {
+        console.error('[P2PSync] Apply sync error:', error);
         setPhase('error');
         setErrorMessage('Failed to apply sync data');
       }
@@ -235,7 +244,7 @@ export function P2PSyncDialog({
 
     syncRef.current = sync;
     return sync;
-  }, [projects, phase, conflictResolution, onSyncComplete, toast]);
+  }, [projects, conflictResolution, onSyncComplete, toast]);
 
   // Create session (initiator)
   const handleCreateSession = async () => {
@@ -507,6 +516,7 @@ export function P2PSyncDialog({
     // Reset processing refs
     scanProcessingRef.current = false;
     answerProcessingRef.current = false;
+    phaseRef.current = 'idle';
     
     setPhase('idle');
     setIsInitiator(false);
