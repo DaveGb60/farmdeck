@@ -353,63 +353,119 @@ export function P2PSyncDialog({
 
   // Handle QR code scan result - use ref to prevent duplicate processing
   const scanProcessingRef = useRef(false);
+  const isMountedRef = useRef(true);
+  
+  // Track mounted state
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   
   const handleQRScan = useCallback((data: string) => {
-    // Prevent duplicate processing and check phase
-    if (!data || scanProcessingRef.current || phase !== 'idle') {
-      console.log('[P2PSync] Ignoring scan - already processing or wrong phase:', { data: !!data, processing: scanProcessingRef.current, phase });
+    // Prevent duplicate processing
+    if (!data || scanProcessingRef.current) {
+      console.log('[P2PSync] Ignoring scan - no data or already processing');
+      return;
+    }
+    
+    // Check current phase using ref to avoid stale closure
+    const currentPhase = phaseRef.current;
+    if (currentPhase !== 'idle') {
+      console.log('[P2PSync] Ignoring scan - wrong phase:', currentPhase);
       return;
     }
     
     scanProcessingRef.current = true;
     console.log('[P2PSync] Processing QR scan for join');
     
-    try {
+    // Use requestAnimationFrame to ensure state updates happen safely
+    requestAnimationFrame(() => {
+      if (!isMountedRef.current) {
+        scanProcessingRef.current = false;
+        return;
+      }
+      
       setJoinCode(data);
-      handleJoinWithData(data).finally(() => {
-        // Reset processing flag after operation completes (success or error)
-        setTimeout(() => {
+      
+      // Delay the join to allow React to complete render cycle
+      setTimeout(() => {
+        if (!isMountedRef.current) {
           scanProcessingRef.current = false;
-        }, 1000);
-      });
-    } catch (error) {
-      console.error('[P2PSync] QR scan error:', error);
-      scanProcessingRef.current = false;
-      setPhase('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to process QR code');
-    }
-  }, [phase, handleJoinWithData]);
+          return;
+        }
+        
+        handleJoinWithData(data)
+          .catch((error) => {
+            console.error('[P2PSync] QR scan join error:', error);
+            if (isMountedRef.current) {
+              setPhase('error');
+              setErrorMessage(error instanceof Error ? error.message : 'Failed to process QR code');
+            }
+          })
+          .finally(() => {
+            setTimeout(() => {
+              scanProcessingRef.current = false;
+            }, 500);
+          });
+      }, 100);
+    });
+  }, [handleJoinWithData]);
 
   // Handle QR scan for answer (initiator scanning joiner's response)
   const answerProcessingRef = useRef(false);
   
   const handleAnswerScan = useCallback((data: string) => {
     // Prevent duplicate processing
-    if (!data || answerProcessingRef.current || phase !== 'waiting' || !isInitiator) {
-      console.log('[P2PSync] Ignoring answer scan - already processing or wrong phase');
+    if (!data || answerProcessingRef.current) {
+      console.log('[P2PSync] Ignoring answer scan - no data or already processing');
+      return;
+    }
+    
+    // Check current phase using ref
+    const currentPhase = phaseRef.current;
+    if (currentPhase !== 'waiting' || !isInitiator) {
+      console.log('[P2PSync] Ignoring answer scan - wrong phase or not initiator');
       return;
     }
     
     answerProcessingRef.current = true;
     console.log('[P2PSync] Processing QR scan for answer');
     
-    try {
+    // Use requestAnimationFrame to ensure state updates happen safely
+    requestAnimationFrame(() => {
+      if (!isMountedRef.current) {
+        answerProcessingRef.current = false;
+        return;
+      }
+      
       setAnswerData(data);
       setShowScanner(false);
       
-      // Auto-connect after scanning answer
-      handleReceiveAnswerWithData(data).finally(() => {
-        setTimeout(() => {
+      // Delay the connection to allow React to complete render cycle
+      setTimeout(() => {
+        if (!isMountedRef.current) {
           answerProcessingRef.current = false;
-        }, 1000);
-      });
-    } catch (error) {
-      console.error('[P2PSync] Answer scan error:', error);
-      answerProcessingRef.current = false;
-      setPhase('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to process answer');
-    }
-  }, [phase, isInitiator, handleReceiveAnswerWithData]);
+          return;
+        }
+        
+        handleReceiveAnswerWithData(data)
+          .catch((error) => {
+            console.error('[P2PSync] Answer scan error:', error);
+            if (isMountedRef.current) {
+              setPhase('error');
+              setErrorMessage(error instanceof Error ? error.message : 'Failed to process answer');
+            }
+          })
+          .finally(() => {
+            setTimeout(() => {
+              answerProcessingRef.current = false;
+            }, 500);
+          });
+      }, 100);
+    });
+  }, [isInitiator, handleReceiveAnswerWithData]);
 
   // Join session (joiner) - manual button
   const handleJoinSession = async () => {
