@@ -102,7 +102,7 @@ export class WebRTCSync {
   private receivedChunks: string[] = [];
   private expectedChunks: number = 0;
   private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
-  private readonly CONNECTION_TIMEOUT_MS = 30000; // 30 seconds
+  private readonly CONNECTION_TIMEOUT_MS = 120000; // 2 minutes for pairing
   
   // Callbacks
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
@@ -374,11 +374,11 @@ export class WebRTCSync {
 
       this.pc.addEventListener('icegatheringstatechange', checkState);
       
-      // Timeout after 5 seconds
+      // Timeout after 15 seconds for ICE gathering
       setTimeout(() => {
         this.pc?.removeEventListener('icegatheringstatechange', checkState);
         resolve();
-      }, 5000);
+      }, 15000);
     });
   }
 
