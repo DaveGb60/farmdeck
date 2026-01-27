@@ -73,13 +73,19 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
         scannerRef.current = new Html5Qrcode('qr-scanner-container');
       }
 
-      // Start scanning
+      // Start scanning with optimized settings for faster detection
       await scannerRef.current.start(
         selectedCamera,
         {
-          fps: 10,
-          qrbox: { width: 250, height: 250 },
+          fps: 30, // Increased from 10 for faster scanning
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            // Dynamic qrbox - use 70% of the smaller dimension for larger scan area
+            const minDimension = Math.min(viewfinderWidth, viewfinderHeight);
+            const size = Math.floor(minDimension * 0.7);
+            return { width: size, height: size };
+          },
           aspectRatio: 1,
+          disableFlip: false, // Allow scanning mirrored QR codes
         },
         (decodedText) => {
           if (mountedRef.current) {
