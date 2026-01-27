@@ -299,8 +299,20 @@ const Index = () => {
       let remainingToSell = saleData.soldQuantity;
       const updatedRecords: FarmRecord[] = [];
 
-      // Deduct from source records (FIFO)
-      for (const record of saleData.sourceRecords) {
+      // Filter out locked records - only use unlocked records as sources
+      const unlockedSourceRecords = saleData.sourceRecords.filter(r => !r.isLocked);
+      
+      if (unlockedSourceRecords.length === 0) {
+        toast({ 
+          title: 'Cannot process batch sale', 
+          description: 'All source records are locked',
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      // Deduct from source records (FIFO) - only unlocked ones
+      for (const record of unlockedSourceRecords) {
         if (remainingToSell <= 0) break;
         const available = record.availableQuantity ?? record.produceAmount;
         const deducted = Math.min(available, remainingToSell);
@@ -311,22 +323,33 @@ const Index = () => {
         updatedRecords.push(updatedRecord);
       }
 
-      // Create batch sale record
+      // If we couldn't sell the full quantity (locked records blocked it)
+      const actuallySold = saleData.soldQuantity - remainingToSell;
+      if (actuallySold <= 0) {
+        toast({ 
+          title: 'Cannot process batch sale', 
+          description: 'No available unlocked inventory to sell',
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      // Create batch sale record with actual sold quantity
       const saleRecord = await createRecord(selectedProject.id, {
         date: saleData.date,
         produceAmount: 0,
         produceRevenue: saleData.revenue,
-        comment: saleData.comment || `Batch sale of ${saleData.soldQuantity} units`,
+        comment: saleData.comment || `Batch sale of ${actuallySold} units`,
         customFields: {},
         isBatchSale: true,
-        soldQuantity: saleData.soldQuantity,
-        sourceRecordIds: saleData.sourceRecords.map(r => r.id),
+        soldQuantity: actuallySold,
+        sourceRecordIds: updatedRecords.map(r => r.id),
         batchSaleId,
       });
 
       // Check for remainder and create carried balance if needed
-      const totalAvailable = saleData.sourceRecords.reduce((sum, r) => sum + (r.availableQuantity ?? r.produceAmount), 0);
-      const remainder = totalAvailable - saleData.soldQuantity;
+      const totalAvailable = unlockedSourceRecords.reduce((sum, r) => sum + (r.availableQuantity ?? r.produceAmount), 0);
+      const remainder = totalAvailable - actuallySold;
       
       if (remainder > 0) {
         await createRecord(selectedProject.id, {
@@ -343,9 +366,22 @@ const Index = () => {
 
       // Reload records
       await loadRecords(selectedProject.id, selectedProject.details, customColumnTypes);
-      toast({ title: 'Batch sale recorded successfully' });
+      
+      if (remainingToSell > 0) {
+        toast({ 
+          title: 'Partial batch sale recorded', 
+          description: `Sold ${actuallySold} units. ${remainingToSell} units could not be sold (locked records).`
+        });
+      } else {
+        toast({ title: 'Batch sale recorded successfully' });
+      }
     } catch (error) {
-      toast({ title: 'Error recording batch sale', variant: 'destructive' });
+      console.error('[BatchSale] Error:', error);
+      toast({ 
+        title: 'Error recording batch sale', 
+        description: error instanceof Error ? error.message : 'An unexpected error occurred',
+        variant: 'destructive' 
+      });
     }
   };
 

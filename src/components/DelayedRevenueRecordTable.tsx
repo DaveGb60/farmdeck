@@ -97,6 +97,8 @@ export function DelayedRevenueRecordTable({
     return records.filter(r => {
       // Skip batch sale records (they represent sales, not inventory)
       if (r.isBatchSale) return false;
+      // Skip locked records - cannot modify their inventory
+      if (r.isLocked) return false;
       // Get available quantity
       const available = r.availableQuantity ?? r.produceAmount;
       return available > 0;
