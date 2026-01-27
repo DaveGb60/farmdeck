@@ -88,15 +88,35 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
           disableFlip: false, // Allow scanning mirrored QR codes
         },
         (decodedText) => {
-          if (mountedRef.current) {
-            console.log('[QRScanner] Successfully scanned:', decodedText.substring(0, 50) + '...');
-            // Stop scanner first, then call onScan
-            stopScanner().then(() => {
-              if (mountedRef.current) {
-                onScan(decodedText);
-              }
-            });
+          // Check if still mounted before processing
+          if (!mountedRef.current) {
+            console.log('[QRScanner] Ignoring scan - component unmounted');
+            return;
           }
+          
+          console.log('[QRScanner] Successfully scanned:', decodedText.substring(0, 50) + '...');
+          
+          // Store the callback to call after stopping
+          const callback = onScan;
+          const scannedData = decodedText;
+          
+          // Stop scanner first, then call onScan via setTimeout to ensure clean state
+          stopScanner().then(() => {
+            // Use setTimeout to ensure we're out of the scanner's callback context
+            setTimeout(() => {
+              if (mountedRef.current) {
+                callback(scannedData);
+              }
+            }, 50);
+          }).catch((err) => {
+            console.warn('[QRScanner] Error during stop after scan:', err);
+            // Still try to call the callback
+            setTimeout(() => {
+              if (mountedRef.current) {
+                callback(scannedData);
+              }
+            }, 50);
+          });
         },
         () => {
           // QR code scan error - ignore, keep scanning
