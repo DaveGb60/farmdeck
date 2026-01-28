@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import DOMPurify from 'dompurify';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -100,17 +101,22 @@ export function NotesEditor({ notes, onChange, readOnly = false }: NotesEditorPr
     }, 0);
   };
 
-  // Render notes with basic formatting
+  // Render notes with basic formatting (sanitized to prevent XSS)
   const renderFormattedNotes = (text: string) => {
     if (!text) return <span className="text-muted-foreground italic">No notes added yet</span>;
     
     return text.split('\n').map((line, index) => {
-      // Bold text
-      let formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      // Bold text - apply formatting then sanitize
+      const formatted = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      // Sanitize HTML to only allow safe tags (strong for bold)
+      const sanitized = DOMPurify.sanitize(formatted, { 
+        ALLOWED_TAGS: ['strong'],
+        ALLOWED_ATTR: [] 
+      });
       
       return (
         <div key={index} className="min-h-[1.5em]">
-          <span dangerouslySetInnerHTML={{ __html: formatted || '&nbsp;' }} />
+          <span dangerouslySetInnerHTML={{ __html: sanitized || '&nbsp;' }} />
         </div>
       );
     });
