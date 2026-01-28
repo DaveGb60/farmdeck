@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
+import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { Camera, CameraOff, RefreshCw, AlertCircle } from 'lucide-react';
 
@@ -7,143 +7,185 @@ interface QRCodeScannerProps {
   onScan: (data: string) => void;
   onError?: (error: string) => void;
   scanning?: boolean;
-  autoStart?: boolean; // New prop - default false, user must click to start
+  autoStart?: boolean;
 }
 
 export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = false }: QRCodeScannerProps) {
-  const scannerRef = useRef<Html5Qrcode | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const animationRef = useRef<number>(0);
+  const mountedRef = useRef(true);
+  const hasScannedRef = useRef(false);
+  
   const [isScanning, setIsScanning] = useState(false);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [currentCameraIndex, setCurrentCameraIndex] = useState(0);
   const [userInitiated, setUserInitiated] = useState(autoStart);
-  const mountedRef = useRef(true);
 
-  const stopScanner = useCallback(async () => {
-    if (scannerRef.current) {
-      try {
-        const state = scannerRef.current.getState();
-        if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
-          await scannerRef.current.stop();
-        }
-      } catch (err) {
-        console.warn('Error stopping scanner:', err);
-      }
+  const stopScanner = useCallback(() => {
+    console.log('[QRScanner] Stopping scanner...');
+    
+    // Cancel animation frame
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = 0;
     }
+    
+    // Stop media stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => {
+        track.stop();
+        console.log('[QRScanner] Stopped track:', track.kind);
+      });
+      streamRef.current = null;
+    }
+    
+    // Clear video
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
     setIsScanning(false);
   }, []);
 
-  const startScanner = useCallback(async (cameraId?: string) => {
-    if (!containerRef.current || !mountedRef.current) return;
+  const scanFrame = useCallback(() => {
+    if (!mountedRef.current || !videoRef.current || !canvasRef.current || hasScannedRef.current) {
+      return;
+    }
 
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    
+    if (!ctx || video.readyState !== video.HAVE_ENOUGH_DATA) {
+      animationRef.current = requestAnimationFrame(scanFrame);
+      return;
+    }
+
+    // Set canvas size to match video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Draw current frame
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Get image data
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    
+    // Try to decode QR code
+    const code = jsQR(imageData.data, imageData.width, imageData.height, {
+      inversionAttempts: 'dontInvert',
+    });
+    
+    if (code && code.data) {
+      console.log('[QRScanner] QR code detected:', code.data.substring(0, 50) + '...');
+      hasScannedRef.current = true;
+      
+      // Stop scanner before calling callback
+      stopScanner();
+      
+      // Call onScan after a small delay to ensure clean state
+      setTimeout(() => {
+        if (mountedRef.current) {
+          onScan(code.data);
+        }
+      }, 50);
+      return;
+    }
+    
+    // Continue scanning
+    animationRef.current = requestAnimationFrame(scanFrame);
+  }, [onScan, stopScanner]);
+
+  const startScanner = useCallback(async (deviceId?: string) => {
+    if (!mountedRef.current) return;
+    
+    console.log('[QRScanner] Starting scanner...');
     setError(null);
+    hasScannedRef.current = false;
     
     try {
       // Get available cameras
-      const devices = await Html5Qrcode.getCameras();
-      if (!mountedRef.current) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(d => d.kind === 'videoinput');
       
-      if (devices.length === 0) {
-        setError('No camera found');
-        setHasPermission(false);
-        return;
+      if (videoDevices.length === 0) {
+        throw new Error('No camera found');
       }
-
-      setCameras(devices);
+      
+      setCameras(videoDevices);
       setHasPermission(true);
-
+      
       // Prefer back camera on mobile
-      let selectedCamera = cameraId || devices[0].id;
-      if (!cameraId) {
-        const backCamera = devices.find(d => 
+      let selectedDeviceId = deviceId;
+      if (!deviceId) {
+        const backCamera = videoDevices.find(d => 
           d.label.toLowerCase().includes('back') || 
           d.label.toLowerCase().includes('rear') ||
           d.label.toLowerCase().includes('environment')
         );
         if (backCamera) {
-          selectedCamera = backCamera.id;
-          setCurrentCameraIndex(devices.findIndex(d => d.id === backCamera.id));
+          selectedDeviceId = backCamera.deviceId;
+          setCurrentCameraIndex(videoDevices.findIndex(d => d.deviceId === backCamera.deviceId));
+        } else {
+          selectedDeviceId = videoDevices[0].deviceId;
         }
       }
-
-      // Create scanner instance
-      if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode('qr-scanner-container');
-      }
-
-      // Start scanning with optimized settings for faster detection
-      await scannerRef.current.start(
-        selectedCamera,
-        {
-          fps: 30, // Increased from 10 for faster scanning
-          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            // Dynamic qrbox - use 70% of the smaller dimension for larger scan area
-            const minDimension = Math.min(viewfinderWidth, viewfinderHeight);
-            const size = Math.floor(minDimension * 0.7);
-            return { width: size, height: size };
-          },
-          aspectRatio: 1,
-          disableFlip: false, // Allow scanning mirrored QR codes
-        },
-        (decodedText) => {
-          // Check if still mounted before processing
-          if (!mountedRef.current) {
-            console.log('[QRScanner] Ignoring scan - component unmounted');
-            return;
-          }
-          
-          console.log('[QRScanner] Successfully scanned:', decodedText.substring(0, 50) + '...');
-          
-          // Store the callback to call after stopping
-          const callback = onScan;
-          const scannedData = decodedText;
-          
-          // Stop scanner first, then call onScan via setTimeout to ensure clean state
-          stopScanner().then(() => {
-            // Use setTimeout to ensure we're out of the scanner's callback context
-            setTimeout(() => {
-              if (mountedRef.current) {
-                callback(scannedData);
-              }
-            }, 50);
-          }).catch((err) => {
-            console.warn('[QRScanner] Error during stop after scan:', err);
-            // Still try to call the callback
-            setTimeout(() => {
-              if (mountedRef.current) {
-                callback(scannedData);
-              }
-            }, 50);
-          });
-        },
-        () => {
-          // QR code scan error - ignore, keep scanning
+      
+      // Request camera access
+      const constraints: MediaStreamConstraints = {
+        video: {
+          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+          facingMode: selectedDeviceId ? undefined : { ideal: 'environment' },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         }
-      );
-
-      if (mountedRef.current) {
+      };
+      
+      console.log('[QRScanner] Requesting camera with constraints:', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      if (!mountedRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.setAttribute('playsinline', 'true');
+        
+        await videoRef.current.play();
+        console.log('[QRScanner] Video playing');
+        
         setIsScanning(true);
+        
+        // Start scanning loop
+        animationRef.current = requestAnimationFrame(scanFrame);
       }
     } catch (err) {
-      console.error('Camera error:', err);
-      if (mountedRef.current) {
-        const errorMessage = err instanceof Error ? err.message : 'Failed to access camera';
-        setError(errorMessage);
-        setHasPermission(false);
-        onError?.(errorMessage);
-      }
+      console.error('[QRScanner] Camera error:', err);
+      
+      if (!mountedRef.current) return;
+      
+      const errorMessage = err instanceof Error ? err.message : 'Failed to access camera';
+      setError(errorMessage);
+      setHasPermission(false);
+      onError?.(errorMessage);
     }
-  }, [onScan, onError, stopScanner]);
+  }, [scanFrame, onError]);
 
   const switchCamera = useCallback(async () => {
     if (cameras.length <= 1) return;
     
-    await stopScanner();
+    stopScanner();
     const nextIndex = (currentCameraIndex + 1) % cameras.length;
     setCurrentCameraIndex(nextIndex);
-    await startScanner(cameras[nextIndex].id);
+    await startScanner(cameras[nextIndex].deviceId);
   }, [cameras, currentCameraIndex, stopScanner, startScanner]);
 
   const retryPermission = useCallback(() => {
@@ -166,7 +208,7 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
       startScanner();
     } else if (!scanning) {
       stopScanner();
-      setUserInitiated(autoStart); // Reset when scanning is disabled
+      setUserInitiated(autoStart);
     }
 
     return () => {
@@ -179,9 +221,14 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {});
-        scannerRef.current = null;
+      hasScannedRef.current = true; // Prevent any pending callbacks
+      
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+      
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
@@ -230,11 +277,19 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
   return (
     <div className="space-y-3">
       <div 
-        ref={containerRef}
         className="relative overflow-hidden rounded-lg bg-black"
         style={{ minHeight: '280px' }}
       >
-        <div id="qr-scanner-container" className="w-full" />
+        <video
+          ref={videoRef}
+          className="w-full h-full object-cover"
+          playsInline
+          muted
+          style={{ minHeight: '280px' }}
+        />
+        
+        {/* Hidden canvas for image processing */}
+        <canvas ref={canvasRef} className="hidden" />
         
         {!isScanning && hasPermission === null && userInitiated && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-muted">
@@ -247,7 +302,7 @@ export function QRCodeScanner({ onScan, onError, scanning = true, autoStart = fa
         {isScanning && (
           <div className="absolute inset-0 pointer-events-none">
             {/* Corner markers */}
-            <div className="absolute top-1/2 left-1/2 w-[260px] h-[260px] -translate-x-1/2 -translate-y-1/2">
+            <div className="absolute top-1/2 left-1/2 w-[200px] h-[200px] -translate-x-1/2 -translate-y-1/2">
               <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-lg" />
               <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-lg" />
               <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-lg" />
