@@ -93,7 +93,7 @@ export function chunkData(data: string): string[] {
   return chunks;
 }
 
-// WebRTC Connection Manager
+// WebRTC Connection Manager with persistent connection handling
 export class WebRTCSync {
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
@@ -102,7 +102,16 @@ export class WebRTCSync {
   private receivedChunks: string[] = [];
   private expectedChunks: number = 0;
   private connectionTimeout: ReturnType<typeof setTimeout> | null = null;
-  private readonly CONNECTION_TIMEOUT_MS = 120000; // 2 minutes for pairing
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private reconnectAttempts: number = 0;
+  private lastOffer: RTCSessionDescriptionInit | null = null;
+  private lastAnswer: RTCSessionDescriptionInit | null = null;
+  
+  // Configuration for persistence
+  private readonly CONNECTION_TIMEOUT_MS = 180000; // 3 minutes for pairing (extended)
+  private readonly HEARTBEAT_INTERVAL_MS = 5000; // 5 second heartbeat
+  private readonly MAX_RECONNECT_ATTEMPTS = 3;
+  private readonly RECONNECT_DELAY_MS = 2000;
   
   // Callbacks
   public onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
@@ -113,15 +122,24 @@ export class WebRTCSync {
   public onDataReceived?: (data: SyncDataPayload) => void;
   public onError?: (error: string) => void;
   public onMessage?: (message: SyncMessage) => void;
+  public onReconnecting?: (attempt: number, maxAttempts: number) => void;
 
   constructor() {
-    // Initialize with ICE servers for NAT traversal
+    this.initializePeerConnection();
+  }
+  
+  // Initialize peer connection with ICE servers
+  private initializePeerConnection(): void {
+    // Use multiple STUN servers for better NAT traversal
     const config: RTCConfiguration = {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
-      ]
+        { urls: 'stun:stun3.l.google.com:19302' },
+        { urls: 'stun:stun4.l.google.com:19302' },
+      ],
+      iceCandidatePoolSize: 10, // Pre-gather ICE candidates
     };
     
     this.pc = new RTCPeerConnection(config);
@@ -145,18 +163,88 @@ export class WebRTCSync {
       this.connectionTimeout = null;
     }
   }
+  
+  // Start heartbeat to maintain connection
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    this.heartbeatInterval = setInterval(() => {
+      if (this.dc?.readyState === 'open') {
+        this.sendMessage({
+          type: 'ack',
+          payload: { heartbeat: true, timestamp: Date.now() },
+          timestamp: Date.now(),
+          messageId: generateMessageId()
+        });
+      }
+    }, this.HEARTBEAT_INTERVAL_MS);
+  }
+  
+  // Stop heartbeat
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+  
+  // Attempt reconnection
+  private async attemptReconnect(): Promise<boolean> {
+    if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
+      console.log('[WebRTC] Max reconnection attempts reached');
+      return false;
+    }
+    
+    this.reconnectAttempts++;
+    console.log(`[WebRTC] Attempting reconnection ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS}`);
+    this.onReconnecting?.(this.reconnectAttempts, this.MAX_RECONNECT_ATTEMPTS);
+    
+    await new Promise(resolve => setTimeout(resolve, this.RECONNECT_DELAY_MS));
+    
+    // Try to restart ICE
+    if (this.pc && this.pc.connectionState !== 'closed') {
+      try {
+        this.pc.restartIce();
+        return true;
+      } catch (error) {
+        console.error('[WebRTC] ICE restart failed:', error);
+        return false;
+      }
+    }
+    
+    return false;
+  }
 
   private setupPeerConnectionHandlers() {
     if (!this.pc) return;
 
-    this.pc.onconnectionstatechange = () => {
+    this.pc.onconnectionstatechange = async () => {
       const state = this.pc?.connectionState || 'closed';
       console.log('[WebRTC] Connection state:', state);
       
-      // Clear timeout on successful connection or failure
       if (state === 'connected') {
         this.clearConnectionTimeout();
-      } else if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+        this.reconnectAttempts = 0;
+        this.startHeartbeat();
+      } else if (state === 'disconnected') {
+        // Attempt automatic reconnection on disconnect
+        this.stopHeartbeat();
+        const reconnected = await this.attemptReconnect();
+        if (!reconnected) {
+          this.clearConnectionTimeout();
+          this.onConnectionStateChange?.(state);
+        }
+        return; // Don't notify yet, wait for reconnection result
+      } else if (state === 'failed') {
+        this.stopHeartbeat();
+        // One more reconnection attempt on failure
+        const reconnected = await this.attemptReconnect();
+        if (!reconnected) {
+          this.clearConnectionTimeout();
+          this.onConnectionStateChange?.(state);
+        }
+        return;
+      } else if (state === 'closed') {
+        this.stopHeartbeat();
         this.clearConnectionTimeout();
       }
       
@@ -164,11 +252,30 @@ export class WebRTCSync {
     };
 
     this.pc.oniceconnectionstatechange = () => {
-      console.log('[WebRTC] ICE connection state:', this.pc?.iceConnectionState);
+      const iceState = this.pc?.iceConnectionState;
+      console.log('[WebRTC] ICE connection state:', iceState);
+      
+      // Handle ICE disconnection with grace period
+      if (iceState === 'disconnected') {
+        console.log('[WebRTC] ICE disconnected, waiting for recovery...');
+        // Give it a chance to recover before marking as failed
+        setTimeout(() => {
+          if (this.pc?.iceConnectionState === 'disconnected') {
+            console.log('[WebRTC] ICE still disconnected, attempting restart');
+            this.pc?.restartIce?.();
+          }
+        }, 3000);
+      }
     };
 
     this.pc.onicegatheringstatechange = () => {
       console.log('[WebRTC] ICE gathering state:', this.pc?.iceGatheringState);
+    };
+    
+    this.pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        console.log('[WebRTC] New ICE candidate:', event.candidate.type);
+      }
     };
 
     this.pc.ondatachannel = (event) => {
@@ -502,6 +609,7 @@ export class WebRTCSync {
   // Close connection
   close(): void {
     this.clearConnectionTimeout();
+    this.stopHeartbeat();
     
     if (this.dc) {
       this.dc.close();
@@ -514,6 +622,9 @@ export class WebRTCSync {
     
     this.receivedChunks = [];
     this.expectedChunks = 0;
+    this.reconnectAttempts = 0;
+    this.lastOffer = null;
+    this.lastAnswer = null;
   }
 
   // Get connection state
@@ -524,6 +635,16 @@ export class WebRTCSync {
   // Get data channel state
   get dataChannelState(): RTCDataChannelState | null {
     return this.dc?.readyState || null;
+  }
+  
+  // Get reconnection status
+  get isReconnecting(): boolean {
+    return this.reconnectAttempts > 0 && this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS;
+  }
+  
+  // Get remaining reconnection attempts
+  get reconnectAttemptsRemaining(): number {
+    return Math.max(0, this.MAX_RECONNECT_ATTEMPTS - this.reconnectAttempts);
   }
 
   // Check if connected
