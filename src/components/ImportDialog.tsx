@@ -46,6 +46,7 @@ export function ImportDialog({
   const [syncPreview, setSyncPreview] = useState<{
     newRecords: number;
     existingRecords: number;
+    duplicateRecords: number;
     projectExists: boolean;
   } | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -68,6 +69,7 @@ export function ImportDialog({
     setSyncPreview({
       newRecords: diff.newRecords.length,
       existingRecords: diff.existingRecords.length,
+      duplicateRecords: diff.duplicateRecords.length,
       projectExists: diff.projectExists,
     });
   };
@@ -202,8 +204,14 @@ export function ImportDialog({
                     </div>
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
                       <ArrowRight className="h-4 w-4" />
-                      <span>{syncPreview.existingRecords} records already synced</span>
+                      <span>{syncPreview.existingRecords} records already synced (same ID)</span>
                     </div>
+                    {syncPreview.duplicateRecords > 0 && (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <ArrowRight className="h-4 w-4" />
+                        <span>{syncPreview.duplicateRecords} duplicate records will be skipped</span>
+                      </div>
+                    )}
                   </>
                 ) : (
                   <p className="text-sm text-muted-foreground">

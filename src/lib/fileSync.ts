@@ -43,12 +43,31 @@ export function validateSyncData(data: unknown): data is SyncData {
   );
 }
 
+// Generate a content fingerprint for a record (excludes id, createdAt, updatedAt)
+function generateRecordFingerprint(record: FarmRecord): string {
+  const content = {
+    projectId: record.projectId,
+    date: record.date,
+    item: record.item || '',
+    produceAmount: record.produceAmount,
+    produceRevenue: record.produceRevenue,
+    comment: record.comment || '',
+    customFields: record.customFields || {},
+    isBatchSale: record.isBatchSale || false,
+    isCarriedBalance: record.isCarriedBalance || false,
+    soldQuantity: record.soldQuantity,
+    availableQuantity: record.availableQuantity,
+  };
+  return JSON.stringify(content);
+}
+
 // Calculate sync diff - what records need to be transferred
 export async function calculateSyncDiff(
   incomingData: SyncData
 ): Promise<{
   newRecords: FarmRecord[];
   existingRecords: FarmRecord[];
+  duplicateRecords: FarmRecord[]; // Records with same content but different IDs
   existingRecordDetails?: FarmRecord[];
   projectExists: boolean;
 }> {
@@ -59,6 +78,7 @@ export async function calculateSyncDiff(
     return {
       newRecords: incomingData.records,
       existingRecords: [],
+      duplicateRecords: [],
       existingRecordDetails: [],
       projectExists: false,
     };
@@ -66,14 +86,36 @@ export async function calculateSyncDiff(
 
   const existingRecords = await getRecordsByProject(incomingData.project.id);
   const existingRecordIds = new Set(existingRecords.map(r => r.id));
+  
+  // Create a set of content fingerprints for existing records
+  const existingFingerprints = new Set(existingRecords.map(r => generateRecordFingerprint(r)));
 
-  const newRecords = incomingData.records.filter(r => !existingRecordIds.has(r.id));
-  const alreadyExisting = incomingData.records.filter(r => existingRecordIds.has(r.id));
+  const newRecords: FarmRecord[] = [];
+  const alreadyExisting: FarmRecord[] = [];
+  const duplicates: FarmRecord[] = [];
+  
+  for (const record of incomingData.records) {
+    if (existingRecordIds.has(record.id)) {
+      // Same ID - already exists
+      alreadyExisting.push(record);
+    } else {
+      // Different ID - check if content is duplicate
+      const fingerprint = generateRecordFingerprint(record);
+      if (existingFingerprints.has(fingerprint)) {
+        // Same content, different ID - this is a duplicate
+        duplicates.push(record);
+      } else {
+        // Truly new record
+        newRecords.push(record);
+      }
+    }
+  }
 
   return {
     newRecords,
     existingRecords: alreadyExisting,
-    existingRecordDetails: existingRecords, // Include full existing records for comparison
+    duplicateRecords: duplicates,
+    existingRecordDetails: existingRecords,
     projectExists: true,
   };
 }
@@ -90,7 +132,7 @@ export async function importSyncData(data: SyncData): Promise<SyncResult> {
     let skippedCount = 0;
     let updatedCount = 0;
     
-    // Import only new records (not already existing)
+    // Import only truly new records (not existing by ID and not content duplicates)
     for (const record of diff.newRecords) {
       try {
         await importRecord(record);
@@ -100,7 +142,10 @@ export async function importSyncData(data: SyncData): Promise<SyncResult> {
       }
     }
     
-    // For existing records, optionally update if incoming is newer
+    // Skip content duplicates (same data, different IDs)
+    skippedCount += diff.duplicateRecords.length;
+    
+    // For existing records (same ID), optionally update if incoming is newer
     for (const incomingRecord of diff.existingRecords) {
       const existingRecord = diff.existingRecordDetails?.find(r => r.id === incomingRecord.id);
       if (existingRecord) {
@@ -123,10 +168,14 @@ export async function importSyncData(data: SyncData): Promise<SyncResult> {
       }
     }
     
+    const duplicateInfo = diff.duplicateRecords.length > 0 
+      ? ` (${diff.duplicateRecords.length} duplicates skipped)` 
+      : '';
+    
     return {
       success: true,
       message: diff.projectExists 
-        ? `Synced ${importedCount} new, ${updatedCount} updated records`
+        ? `Synced ${importedCount} new, ${updatedCount} updated records${duplicateInfo}`
         : `Imported project with ${importedCount} records`,
       newRecords: importedCount,
       updatedRecords: updatedCount,
