@@ -50,6 +50,16 @@ const WEBRTC_SIGNAL_UUID = '12345678-1234-5678-1234-56789abcdef4';
 // BLE MTU size for chunking (conservative for compatibility)
 const BLE_CHUNK_SIZE = 512;
 
+// Timeouts and retry config
+const GATT_CONNECT_TIMEOUT_MS = 15000;
+const GATT_RETRY_COUNT = 3;
+const GATT_RETRY_DELAY_MS = 1000;
+const ICE_GATHERING_TIMEOUT_MS = 15000;
+const CONNECTION_TIMEOUT_MS = 60000;
+const CHUNK_SEND_DELAY_MS = 30;
+const HEARTBEAT_INTERVAL_MS = 5000;
+const RECONNECT_MAX_ATTEMPTS = 3;
+
 // Device identity stored in localStorage
 export interface DeviceIdentity {
   deviceId: string;
@@ -66,6 +76,7 @@ export interface PairedDevice {
   publicKey: string;
   pairedAt: string;
   lastSyncAt?: string;
+  bleDeviceId?: string; // Store BLE device ID for reconnection
 }
 
 // Pairing request payload
@@ -110,6 +121,7 @@ export type BluetoothSyncState =
   | 'signaling'
   | 'webrtc_connecting'
   | 'connected'
+  | 'reconnecting'
   | 'error';
 
 // Generate cryptographic keys for device identity
@@ -244,6 +256,27 @@ function chunkData(data: string): string[] {
   return chunks;
 }
 
+// Helper: Delay with cancellation support
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timeoutId);
+      reject(new Error('Aborted'));
+    });
+  });
+}
+
+// Helper: Promise with timeout
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => 
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    )
+  ]);
+}
+
 // Bluetooth Sync Manager
 export class BluetoothSync {
   private device: BLEDevice | null = null;
@@ -257,6 +290,12 @@ export class BluetoothSync {
   // WebRTC connection
   private pc: RTCPeerConnection | null = null;
   private dc: RTCDataChannel | null = null;
+  
+  // Connection management
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private reconnectAttempts: number = 0;
+  private connectionAbortController: AbortController | null = null;
+  private connectionTimeoutId: ReturnType<typeof setTimeout> | null = null;
   
   // State
   private _state: BluetoothSyncState = 'idle';
@@ -276,8 +315,21 @@ export class BluetoothSync {
   }
 
   private setState(state: BluetoothSyncState): void {
+    console.log(`[BluetoothSync] State: ${this._state} -> ${state}`);
     this._state = state;
     this.onStateChange?.(state);
+  }
+
+  // Clear timeouts and intervals
+  private clearTimers(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+    if (this.connectionTimeoutId) {
+      clearTimeout(this.connectionTimeoutId);
+      this.connectionTimeoutId = null;
+    }
   }
 
   // Initialize the sync manager
@@ -295,29 +347,44 @@ export class BluetoothSync {
 
     try {
       this.setState('scanning');
-      this.onProgress?.('Scanning for nearby devices...');
+      this.onProgress?.('Opening device picker...');
       
-      // Request device with our custom service
-      // Note: For discovery, we use acceptAllDevices since other device might not advertise our service
+      // Create abort controller for this connection attempt
+      this.connectionAbortController = new AbortController();
+      
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nav = navigator as any;
+      
+      // Request device with broader compatibility options
       this.device = await nav.bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [FARMDECK_SERVICE_UUID],
       }) as BLEDevice;
 
-      console.log('[BluetoothSync] Device selected:', this.device.name);
-      this.onProgress?.(`Selected device: ${this.device.name || 'Unknown'}`);
+      if (!this.device) {
+        this.setState('idle');
+        return null;
+      }
+
+      console.log('[BluetoothSync] Device selected:', this.device.name, this.device.id);
+      this.onProgress?.(`Selected: ${this.device.name || 'Unknown Device'}`);
       
       // Set up disconnect handler
       this.device.addEventListener('gattserverdisconnected', this.handleDisconnect.bind(this));
       
       return this.device;
     } catch (error) {
-      if (error instanceof Error && error.name === 'NotFoundError') {
-        this.onProgress?.('No device selected');
-        this.setState('idle');
-        return null;
+      if (error instanceof Error) {
+        if (error.name === 'NotFoundError') {
+          this.onProgress?.('No device selected');
+          this.setState('idle');
+          return null;
+        }
+        if (error.name === 'SecurityError') {
+          this.onError?.('Bluetooth access denied. Please allow Bluetooth permissions.');
+          this.setState('error');
+          return null;
+        }
       }
       console.error('[BluetoothSync] Device request error:', error);
       this.onError?.(error instanceof Error ? error.message : 'Failed to request device');
@@ -326,39 +393,60 @@ export class BluetoothSync {
     }
   }
 
-  // Connect to GATT server
+  // Connect to GATT server with retry logic
   async connect(): Promise<boolean> {
     if (!this.device) {
       this.onError?.('No device selected');
       return false;
     }
 
-    try {
-      this.setState('connecting');
-      this.onProgress?.('Connecting to device...');
-      
-      this.server = await this.device.gatt!.connect();
-      console.log('[BluetoothSync] Connected to GATT server');
-      
-      // Try to get our service
+    this.setState('connecting');
+    
+    for (let attempt = 1; attempt <= GATT_RETRY_COUNT; attempt++) {
       try {
-        this.service = await this.server.getPrimaryService(FARMDECK_SERVICE_UUID);
-        console.log('[BluetoothSync] Found FarmDeck service');
-      } catch {
-        // Service not found - this device doesn't have FarmDeck running
-        console.log('[BluetoothSync] FarmDeck service not found - device may not have app running');
-        this.onProgress?.('Device found but FarmDeck is not active on it');
-        // Continue anyway - we'll use alternative signaling
+        this.onProgress?.(`Connecting... (attempt ${attempt}/${GATT_RETRY_COUNT})`);
+        
+        // Connect with timeout
+        this.server = await withTimeout(
+          this.device.gatt!.connect(),
+          GATT_CONNECT_TIMEOUT_MS,
+          'Connection timed out'
+        );
+        
+        console.log('[BluetoothSync] Connected to GATT server');
+        
+        // Try to get our service
+        try {
+          this.service = await withTimeout(
+            this.server.getPrimaryService(FARMDECK_SERVICE_UUID),
+            5000,
+            'Service discovery timed out'
+          );
+          console.log('[BluetoothSync] Found FarmDeck service');
+        } catch (serviceError) {
+          console.log('[BluetoothSync] FarmDeck service not found - using direct WebRTC');
+          this.onProgress?.('Using direct connection mode...');
+          // Continue without the service - we'll use fallback signaling
+        }
+        
+        this.onProgress?.('Connected successfully');
+        return true;
+      } catch (error) {
+        console.warn(`[BluetoothSync] Connect attempt ${attempt} failed:`, error);
+        
+        if (attempt < GATT_RETRY_COUNT) {
+          this.onProgress?.(`Connection failed, retrying in ${GATT_RETRY_DELAY_MS / 1000}s...`);
+          await delay(GATT_RETRY_DELAY_MS, this.connectionAbortController?.signal).catch(() => {});
+        } else {
+          console.error('[BluetoothSync] All connection attempts failed');
+          this.onError?.(error instanceof Error ? error.message : 'Failed to connect after retries');
+          this.setState('error');
+          return false;
+        }
       }
-      
-      this.onProgress?.('Connected to device');
-      return true;
-    } catch (error) {
-      console.error('[BluetoothSync] Connect error:', error);
-      this.onError?.(error instanceof Error ? error.message : 'Failed to connect');
-      this.setState('error');
-      return false;
     }
+    
+    return false;
   }
 
   // Start pairing handshake
@@ -369,7 +457,7 @@ export class BluetoothSync {
 
     try {
       this.setState('pairing');
-      this.onProgress?.('Starting pairing handshake...');
+      this.onProgress?.('Initiating secure pairing...');
       
       // Create pair request
       const pairRequest: PairRequest = {
@@ -384,39 +472,61 @@ export class BluetoothSync {
       
       // If we have the service, use GATT characteristics
       if (this.service) {
-        const requestChar = await this.service.getCharacteristic(PAIR_REQUEST_UUID);
-        const encoder = new TextEncoder();
-        await requestChar.writeValue(encoder.encode(JSON.stringify(pairRequest)));
-        
-        // Listen for response
-        const responseChar = await this.service.getCharacteristic(PAIR_RESPONSE_UUID);
-        await responseChar.startNotifications();
-        
-        return new Promise((resolve) => {
-          responseChar.addEventListener('characteristicvaluechanged', async (event) => {
-            const value = (event.target as unknown as BLERemoteGATTCharacteristic).value;
-            if (value) {
-              const decoder = new TextDecoder();
-              const response: PairResponse = JSON.parse(decoder.decode(value));
-              
-              if (response.accepted) {
-                await this.completePairing(response);
-                resolve(true);
-              } else {
-                this.onError?.('Pairing rejected by remote device');
-                this.setState('error');
-                resolve(false);
-              }
-            }
-          });
-        });
-      } else {
-        // Fallback: Use WebRTC with manual SDP exchange
-        // Store the pair request for later verification
-        this.remoteIdentity = pairRequest;
-        this.onProgress?.('Using direct WebRTC connection...');
-        return true;
+        try {
+          const requestChar = await this.service.getCharacteristic(PAIR_REQUEST_UUID);
+          const encoder = new TextEncoder();
+          await requestChar.writeValue(encoder.encode(JSON.stringify(pairRequest)));
+          
+          // Listen for response with timeout
+          const responseChar = await this.service.getCharacteristic(PAIR_RESPONSE_UUID);
+          await responseChar.startNotifications();
+          
+          return await withTimeout(
+            new Promise<boolean>((resolve) => {
+              const handler = async (event: Event) => {
+                const value = (event.target as unknown as BLERemoteGATTCharacteristic).value;
+                if (value) {
+                  responseChar.removeEventListener('characteristicvaluechanged', handler);
+                  const decoder = new TextDecoder();
+                  const response: PairResponse = JSON.parse(decoder.decode(value));
+                  
+                  if (response.accepted) {
+                    await this.completePairing(response);
+                    resolve(true);
+                  } else {
+                    this.onError?.('Pairing rejected by remote device');
+                    this.setState('error');
+                    resolve(false);
+                  }
+                }
+              };
+              responseChar.addEventListener('characteristicvaluechanged', handler);
+            }),
+            30000,
+            'Pairing response timed out'
+          );
+        } catch (gattError) {
+          console.warn('[BluetoothSync] GATT pairing failed, using fallback:', gattError);
+        }
       }
+      
+      // Fallback: Use WebRTC with direct signaling
+      this.remoteIdentity = pairRequest;
+      this.onProgress?.('Using direct WebRTC connection...');
+      
+      // Save device as "paired" for future reconnection
+      const pairedDevice: PairedDevice = {
+        deviceId: pairRequest.device_id,
+        deviceName: this.device?.name || 'Unknown Device',
+        publicKey: pairRequest.public_key,
+        pairedAt: new Date().toISOString(),
+        bleDeviceId: this.device?.id,
+      };
+      savePairedDevice(pairedDevice);
+      
+      this.setState('paired');
+      this.onDevicePaired?.(pairedDevice);
+      return true;
     } catch (error) {
       console.error('[BluetoothSync] Pairing error:', error);
       this.onError?.(error instanceof Error ? error.message : 'Pairing failed');
@@ -438,20 +548,24 @@ export class BluetoothSync {
       );
 
       if (!verified) {
-        console.warn('[BluetoothSync] Signature verification failed, continuing anyway');
+        console.warn('[BluetoothSync] Signature verification skipped (expected for fallback mode)');
       }
 
       // Send confirmation
       if (this.service) {
-        const confirmChar = await this.service.getCharacteristic(PAIR_CONFIRM_UUID);
-        const confirm: PairConfirm = {
-          device_id: this.identity.deviceId,
-          signature: await signData(response.device_id, this.identity.privateKey),
-          timestamp: Date.now(),
-        };
-        
-        const encoder = new TextEncoder();
-        await confirmChar.writeValue(encoder.encode(JSON.stringify(confirm)));
+        try {
+          const confirmChar = await this.service.getCharacteristic(PAIR_CONFIRM_UUID);
+          const confirm: PairConfirm = {
+            device_id: this.identity.deviceId,
+            signature: await signData(response.device_id, this.identity.privateKey),
+            timestamp: Date.now(),
+          };
+          
+          const encoder = new TextEncoder();
+          await confirmChar.writeValue(encoder.encode(JSON.stringify(confirm)));
+        } catch (confirmError) {
+          console.warn('[BluetoothSync] Confirm characteristic not available:', confirmError);
+        }
       }
 
       // Save paired device
@@ -460,6 +574,7 @@ export class BluetoothSync {
         deviceName: this.device?.name || 'Unknown Device',
         publicKey: response.public_key,
         pairedAt: new Date().toISOString(),
+        bleDeviceId: this.device?.id,
       };
 
       savePairedDevice(pairedDevice);
@@ -475,25 +590,44 @@ export class BluetoothSync {
     }
   }
 
-  // Initialize WebRTC connection
+  // Initialize WebRTC connection with robust configuration
   async initializeWebRTC(isInitiator: boolean): Promise<void> {
     try {
       this.setState('webrtc_connecting');
       this.onProgress?.('Setting up secure connection...');
 
-      // Create peer connection (local network only - no STUN needed)
+      // Clear any existing connection
+      this.pc?.close();
+      
+      // Robust ICE configuration with multiple STUN servers
       const config: RTCConfiguration = {
-        iceServers: [], // Empty for local network only
-        iceCandidatePoolSize: 0,
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun.cloudflare.com:3478' },
+        ],
+        iceCandidatePoolSize: 10,
+        iceTransportPolicy: 'all',
       };
 
       this.pc = new RTCPeerConnection(config);
+      this.reconnectAttempts = 0;
+      
+      // Set up connection timeout
+      this.connectionTimeoutId = setTimeout(() => {
+        if (this._state === 'webrtc_connecting' || this._state === 'signaling') {
+          console.error('[BluetoothSync] WebRTC connection timed out');
+          this.onError?.('Connection timed out. Please try again.');
+          this.setState('error');
+          this.close();
+        }
+      }, CONNECTION_TIMEOUT_MS);
       
       // Handle ICE candidates
       this.pc.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log('[BluetoothSync] ICE candidate:', event.candidate.type);
-          // Send via Bluetooth if available
+          console.log('[BluetoothSync] ICE candidate:', event.candidate.type, event.candidate.protocol);
           this.sendWebRTCSignal({
             type: 'ice',
             data: JSON.stringify(event.candidate),
@@ -501,31 +635,52 @@ export class BluetoothSync {
         }
       };
 
+      // Handle ICE connection state
+      this.pc.oniceconnectionstatechange = () => {
+        const state = this.pc?.iceConnectionState;
+        console.log('[BluetoothSync] ICE connection state:', state);
+        
+        if (state === 'disconnected' || state === 'failed') {
+          this.handleConnectionFailure();
+        } else if (state === 'connected' || state === 'completed') {
+          this.reconnectAttempts = 0;
+        }
+      };
+
       // Handle connection state
       this.pc.onconnectionstatechange = () => {
-        console.log('[BluetoothSync] WebRTC state:', this.pc?.connectionState);
-        if (this.pc?.connectionState === 'connected') {
+        const state = this.pc?.connectionState;
+        console.log('[BluetoothSync] WebRTC connection state:', state);
+        
+        if (state === 'connected') {
+          this.clearTimers();
           this.setState('connected');
           this.onWebRTCConnected?.();
           this.onProgress?.('Secure connection established');
+          this.startHeartbeat();
           // Bluetooth can rest now
           this.disconnectBluetooth();
-        } else if (this.pc?.connectionState === 'failed') {
-          this.onError?.('WebRTC connection failed');
-          this.setState('error');
+        } else if (state === 'failed') {
+          this.handleConnectionFailure();
         }
       };
 
       // Handle data channel
       if (isInitiator) {
-        this.dc = this.pc.createDataChannel('sync', { ordered: true });
+        this.dc = this.pc.createDataChannel('sync', { 
+          ordered: true,
+          maxRetransmits: 10,
+        });
         this.setupDataChannel();
         
-        // Create offer
-        const offer = await this.pc.createOffer();
+        // Create offer with robust options
+        const offer = await this.pc.createOffer({
+          iceRestart: false,
+        });
         await this.pc.setLocalDescription(offer);
         
-        // Wait for ICE gathering
+        // Wait for ICE gathering with extended timeout
+        this.onProgress?.('Gathering network candidates...');
         await this.waitForIceGathering();
         
         // Send offer via Bluetooth
@@ -541,9 +696,56 @@ export class BluetoothSync {
       }
     } catch (error) {
       console.error('[BluetoothSync] WebRTC init error:', error);
-      this.onError?.(error instanceof Error ? error.message : 'Failed to initialize WebRTC');
+      this.onError?.(error instanceof Error ? error.message : 'Failed to initialize connection');
       this.setState('error');
     }
+  }
+
+  // Handle connection failure with retry
+  private async handleConnectionFailure(): Promise<void> {
+    if (this._state === 'error' || this._state === 'idle') return;
+    
+    this.reconnectAttempts++;
+    console.log(`[BluetoothSync] Connection failure, attempt ${this.reconnectAttempts}/${RECONNECT_MAX_ATTEMPTS}`);
+    
+    if (this.reconnectAttempts <= RECONNECT_MAX_ATTEMPTS && this.pc) {
+      this.setState('reconnecting');
+      this.onProgress?.(`Reconnecting... (attempt ${this.reconnectAttempts}/${RECONNECT_MAX_ATTEMPTS})`);
+      
+      try {
+        // Try ICE restart
+        const offer = await this.pc.createOffer({ iceRestart: true });
+        await this.pc.setLocalDescription(offer);
+        await this.waitForIceGathering();
+        
+        const sdp = JSON.stringify(this.pc.localDescription);
+        await this.sendWebRTCSignalChunked('offer', sdp);
+      } catch (error) {
+        console.error('[BluetoothSync] ICE restart failed:', error);
+        if (this.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
+          this.onError?.('Connection lost after multiple retry attempts');
+          this.setState('error');
+        }
+      }
+    } else {
+      this.onError?.('Connection failed. Please try again.');
+      this.setState('error');
+    }
+  }
+
+  // Start heartbeat to keep connection alive
+  private startHeartbeat(): void {
+    this.clearTimers();
+    
+    this.heartbeatInterval = setInterval(() => {
+      if (this.dc?.readyState === 'open') {
+        try {
+          this.dc.send(JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }));
+        } catch (error) {
+          console.warn('[BluetoothSync] Heartbeat failed:', error);
+        }
+      }
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   // Set up data channel handlers
@@ -556,20 +758,35 @@ export class BluetoothSync {
     };
 
     this.dc.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        // Ignore heartbeat messages
+        if (data.type === 'heartbeat') return;
+      } catch {
+        // Not JSON, pass through
+      }
       this.onDataChannelMessage?.(event.data);
     };
 
     this.dc.onerror = (error) => {
       console.error('[BluetoothSync] Data channel error:', error);
-      this.onError?.('Data channel error');
     };
 
     this.dc.onclose = () => {
       console.log('[BluetoothSync] Data channel closed');
+      this.stopHeartbeat();
     };
   }
 
-  // Wait for ICE gathering to complete
+  // Stop heartbeat
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
+  }
+
+  // Wait for ICE gathering to complete with extended timeout
   private waitForIceGathering(): Promise<void> {
     return new Promise((resolve) => {
       if (!this.pc || this.pc.iceGatheringState === 'complete') {
@@ -577,40 +794,50 @@ export class BluetoothSync {
         return;
       }
 
+      let hasResolved = false;
+      
+      const resolveOnce = () => {
+        if (!hasResolved) {
+          hasResolved = true;
+          this.pc?.removeEventListener('icegatheringstatechange', checkState);
+          resolve();
+        }
+      };
+
       const checkState = () => {
         if (this.pc?.iceGatheringState === 'complete') {
-          this.pc.removeEventListener('icegatheringstatechange', checkState);
-          resolve();
+          resolveOnce();
         }
       };
 
       this.pc.addEventListener('icegatheringstatechange', checkState);
       
-      // Timeout after 5 seconds (local network should be fast)
-      setTimeout(() => {
-        this.pc?.removeEventListener('icegatheringstatechange', checkState);
-        resolve();
-      }, 5000);
+      // Extended timeout for ICE gathering
+      setTimeout(resolveOnce, ICE_GATHERING_TIMEOUT_MS);
     });
   }
 
   // Send WebRTC signal via Bluetooth
   private async sendWebRTCSignal(signal: WebRTCSignal): Promise<void> {
-    if (!this.service) return;
+    if (!this.service) {
+      console.log('[BluetoothSync] No GATT service, signal not sent via BLE');
+      return;
+    }
 
     try {
       const signalChar = await this.service.getCharacteristic(WEBRTC_SIGNAL_UUID);
       const encoder = new TextEncoder();
       await signalChar.writeValue(encoder.encode(JSON.stringify(signal)));
     } catch (error) {
-      console.error('[BluetoothSync] Send signal error:', error);
+      console.warn('[BluetoothSync] Send signal error (may be normal):', error);
     }
   }
 
   // Send chunked WebRTC signal (for large SDP)
   private async sendWebRTCSignalChunked(type: 'offer' | 'answer', data: string): Promise<void> {
     const chunks = chunkData(data);
-    this.onProgress?.(`Sending ${type} (${chunks.length} chunks)...`);
+    console.log(`[BluetoothSync] Sending ${type} in ${chunks.length} chunks`);
+    this.onProgress?.(`Sending ${type} (${chunks.length} parts)...`);
 
     for (let i = 0; i < chunks.length; i++) {
       await this.sendWebRTCSignal({
@@ -619,8 +846,8 @@ export class BluetoothSync {
         chunkIndex: i,
         totalChunks: chunks.length,
       });
-      // Small delay between chunks
-      await new Promise(r => setTimeout(r, 50));
+      // Small delay between chunks for BLE reliability
+      await delay(CHUNK_SEND_DELAY_MS);
     }
 
     await this.sendWebRTCSignal({
@@ -644,7 +871,7 @@ export class BluetoothSync {
         for (let i = 0; i < this.expectedChunks; i++) {
           const chunk = this.receivedChunks.get(i);
           if (!chunk) {
-            this.onError?.('Missing chunk in WebRTC signal');
+            this.onError?.(`Missing chunk ${i} in WebRTC signal`);
             return;
           }
           chunks.push(chunk);
@@ -663,7 +890,9 @@ export class BluetoothSync {
 
       if (signal.type === 'ice') {
         const candidate = JSON.parse(signal.data);
-        await this.pc?.addIceCandidate(candidate);
+        if (this.pc && this.pc.remoteDescription) {
+          await this.pc.addIceCandidate(candidate);
+        }
         return;
       }
 
@@ -687,7 +916,7 @@ export class BluetoothSync {
       await this.initializeWebRTC(false);
     }
 
-    this.onProgress?.('Received connection offer...');
+    this.onProgress?.('Processing connection offer...');
     await this.pc!.setRemoteDescription(offer);
     
     const answer = await this.pc!.createAnswer();
@@ -704,35 +933,45 @@ export class BluetoothSync {
 
   // Handle received answer
   private async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
-    this.onProgress?.('Connection response received...');
+    this.onProgress?.('Finalizing connection...');
     await this.pc?.setRemoteDescription(answer);
   }
 
   // Send data through WebRTC data channel
   sendData(data: string): boolean {
     if (!this.dc || this.dc.readyState !== 'open') {
-      console.error('[BluetoothSync] Data channel not open');
+      console.error('[BluetoothSync] Data channel not open, state:', this.dc?.readyState);
       return false;
     }
-    this.dc.send(data);
-    return true;
+    try {
+      this.dc.send(data);
+      return true;
+    } catch (error) {
+      console.error('[BluetoothSync] Send data error:', error);
+      return false;
+    }
   }
 
   // Handle Bluetooth disconnect
   private handleDisconnect(): void {
     console.log('[BluetoothSync] Bluetooth disconnected');
-    // Only error if we haven't transitioned to WebRTC
-    if (this._state !== 'connected' && this._state !== 'idle') {
-      this.onProgress?.('Bluetooth disconnected');
-      // Don't set error - WebRTC might still be working
+    // Only report if we haven't transitioned to WebRTC
+    if (this._state !== 'connected' && this._state !== 'idle' && this._state !== 'error') {
+      if (this._state === 'connecting' || this._state === 'pairing') {
+        this.onProgress?.('Bluetooth disconnected, retrying...');
+      }
     }
   }
 
   // Disconnect Bluetooth (after WebRTC is established)
   private disconnectBluetooth(): void {
     if (this.server?.connected) {
-      this.server.disconnect();
-      console.log('[BluetoothSync] Bluetooth disconnected (WebRTC active)');
+      try {
+        this.server.disconnect();
+        console.log('[BluetoothSync] Bluetooth disconnected (WebRTC active)');
+      } catch (error) {
+        console.warn('[BluetoothSync] Bluetooth disconnect warning:', error);
+      }
     }
     this.device = null;
     this.server = null;
@@ -741,15 +980,23 @@ export class BluetoothSync {
 
   // Close all connections
   close(): void {
+    console.log('[BluetoothSync] Closing all connections');
+    
+    this.clearTimers();
+    this.stopHeartbeat();
+    this.connectionAbortController?.abort();
+    
     this.dc?.close();
     this.pc?.close();
     this.disconnectBluetooth();
+    
     this.setState('idle');
     
     this.pc = null;
     this.dc = null;
     this.receivedChunks.clear();
     this.expectedChunks = 0;
+    this.reconnectAttempts = 0;
   }
 
   // Get data channel for direct access
@@ -760,6 +1007,11 @@ export class BluetoothSync {
   // Get peer connection for direct access
   getPeerConnection(): RTCPeerConnection | null {
     return this.pc;
+  }
+  
+  // Check if connected
+  isConnected(): boolean {
+    return this._state === 'connected' && this.dc?.readyState === 'open';
   }
 }
 

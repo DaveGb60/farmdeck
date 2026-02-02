@@ -69,6 +69,7 @@ type SyncPhase =
   | 'selecting'
   | 'confirming'
   | 'transferring'
+  | 'reconnecting'
   | 'complete'
   | 'error';
 
@@ -160,6 +161,7 @@ export function BluetoothSyncDialog({
       switch (state) {
         case 'scanning':
           setPhase('scanning');
+          setStatusMessage('Opening device picker...');
           break;
         case 'connecting':
           setPhase('connecting');
@@ -169,6 +171,15 @@ export function BluetoothSyncDialog({
           break;
         case 'paired':
           setPhase('paired');
+          break;
+        case 'webrtc_connecting':
+          setStatusMessage('Establishing secure connection...');
+          break;
+        case 'signaling':
+          setStatusMessage('Exchanging connection info...');
+          break;
+        case 'reconnecting':
+          setPhase('reconnecting');
           break;
         case 'connected':
           setPhase('selecting');
@@ -492,24 +503,48 @@ export function BluetoothSyncDialog({
       case 'pairing':
         return (
           <div className="flex flex-col items-center justify-center py-8">
-            <Loader2 className="h-12 w-12 text-primary animate-spin mb-4" />
+            <div className="relative mb-4">
+              <Loader2 className="h-12 w-12 text-primary animate-spin" />
+              {phase === 'connecting' && (
+                <div className="absolute -bottom-1 -right-1 h-4 w-4 bg-primary rounded-full animate-pulse" />
+              )}
+            </div>
             <p className="text-lg font-medium mb-2">
-              {phase === 'scanning' && 'Scanning for devices...'}
+              {phase === 'scanning' && 'Looking for devices...'}
               {phase === 'connecting' && 'Connecting...'}
-              {phase === 'pairing' && 'Pairing...'}
+              {phase === 'pairing' && 'Establishing trust...'}
             </p>
-            <p className="text-sm text-muted-foreground">{statusMessage}</p>
+            <p className="text-sm text-muted-foreground text-center max-w-xs">{statusMessage}</p>
+            {phase === 'connecting' && (
+              <p className="text-xs text-muted-foreground mt-3">This may take a few seconds</p>
+            )}
           </div>
         );
 
       case 'paired':
         return (
           <div className="flex flex-col items-center justify-center py-8">
-            <CheckCircle2 className="h-12 w-12 text-success mb-4" />
+            <CheckCircle2 className="h-12 w-12 text-green-500 mb-4" />
             <p className="text-lg font-medium mb-2">Device Paired!</p>
             <p className="text-sm text-muted-foreground mb-4">{deviceName}</p>
-            <p className="text-sm text-muted-foreground">Establishing secure connection...</p>
-            <Loader2 className="h-6 w-6 text-primary animate-spin mt-4" />
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Setting up secure channel...</span>
+            </div>
+          </div>
+        );
+
+      case 'reconnecting':
+        return (
+          <div className="flex flex-col items-center justify-center py-8">
+            <div className="relative mb-4">
+              <RefreshCw className="h-12 w-12 text-amber-500 animate-spin" />
+            </div>
+            <p className="text-lg font-medium mb-2">Reconnecting...</p>
+            <p className="text-sm text-muted-foreground text-center max-w-xs">{statusMessage}</p>
+            <Button variant="ghost" size="sm" className="mt-4" onClick={handleReset}>
+              Cancel
+            </Button>
           </div>
         );
 
