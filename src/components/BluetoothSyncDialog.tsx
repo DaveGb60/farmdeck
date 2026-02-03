@@ -7,37 +7,20 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import { FarmProject, FarmRecord, getRecordsByProject } from '@/lib/db';
 import {
   BluetoothSync,
   isBluetoothAvailable,
-  getOrCreateDeviceIdentity,
   getPairedDevices,
   PairedDevice,
   BluetoothSyncState,
 } from '@/lib/bluetoothSync';
 import {
   SyncMetadata,
-  SyncSelection,
-  TransferProgress,
-  SyncDataPayload,
-  detectConflicts,
-  applySyncData,
   getDeviceId,
   ProjectSummary,
 } from '@/lib/webrtcSync';
@@ -45,18 +28,12 @@ import {
   Bluetooth,
   BluetoothOff,
   Send,
-  Download,
   CheckCircle2,
   XCircle,
   Loader2,
   Smartphone,
   RefreshCw,
-  AlertTriangle,
-  ArrowRight,
-  Clock,
-  Database,
   Plus,
-  Trash2,
   Link,
 } from 'lucide-react';
 
@@ -103,12 +80,9 @@ export function BluetoothSyncDialog({
   const [localMetadata, setLocalMetadata] = useState<SyncMetadata | null>(null);
   const [remoteMetadata, setRemoteMetadata] = useState<SyncMetadata | null>(null);
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
-  const [direction, setDirection] = useState<'send' | 'receive'>('send');
   
   // Transfer state
-  const [progress, setProgress] = useState<TransferProgress | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [syncResult, setSyncResult] = useState<{ imported: number; skipped: number; conflicts: number } | null>(null);
 
   // Check Bluetooth availability on mount
@@ -230,17 +204,6 @@ export function BluetoothSyncDialog({
         if (message.type === 'metadata') {
           setRemoteMetadata(message.payload);
           setPhase('selecting');
-        } else if (message.type === 'sync-data') {
-          // Received sync data
-          const syncData: SyncDataPayload = message.payload;
-          const result = await applySyncData(syncData, 'keep_newer', projects);
-          setSyncResult(result);
-          setPhase('complete');
-          onSyncComplete();
-          toast({
-            title: 'Sync complete',
-            description: `Imported ${result.imported} project(s), ${result.skipped} skipped`
-          });
         }
       } catch (error) {
         console.error('[BluetoothSyncDialog] Message parse error:', error);
@@ -257,7 +220,7 @@ export function BluetoothSyncDialog({
     return sync;
   }, [buildLocalMetadata, projects, onSyncComplete, toast]);
 
-  // Start Bluetooth discovery
+  // Start Bluetooth discovery - simplified flow
   const handleAddDevice = async () => {
     try {
       setPhase('scanning');
@@ -267,6 +230,7 @@ export function BluetoothSyncDialog({
       const sync = initSync();
       await sync.initialize();
       
+      // Step 1: Request device via Bluetooth picker
       const device = await sync.requestDevice();
       if (!device) {
         setPhase('idle');
@@ -275,20 +239,36 @@ export function BluetoothSyncDialog({
       
       setDeviceName(device.name || 'Unknown Device');
       
-      // Connect and pair
+      // Step 2: Try to connect (optional, for trust verification)
+      setPhase('connecting');
+      setStatusMessage('Verifying device...');
+      
       const connected = await sync.connect();
       if (!connected) {
-        return;
+        // Even if GATT fails, we proceed since device was discovered
+        console.log('[BluetoothSyncDialog] GATT optional, continuing...');
       }
       
-      // Start pairing
+      // Step 3: Establish pairing (trust relationship)
+      setPhase('pairing');
+      setStatusMessage('Establishing trust...');
+      
       const paired = await sync.startPairing();
       if (!paired) {
+        setPhase('error');
+        setErrorMessage('Failed to pair with device');
         return;
       }
       
-      // Initialize WebRTC
-      await sync.initializeWebRTC(true);
+      // Step 4: Build local metadata and go to selection
+      await buildLocalMetadata();
+      setPhase('selecting');
+      setStatusMessage('');
+      
+      toast({
+        title: 'Device paired',
+        description: `Connected to ${device.name || 'device'}. Select projects to sync.`
+      });
       
     } catch (error) {
       console.error('[BluetoothSyncDialog] Add device error:', error);
@@ -328,15 +308,14 @@ export function BluetoothSyncDialog({
 
   // Select all projects
   const selectAllProjects = () => {
-    const source = direction === 'send' ? localMetadata?.projects : remoteMetadata?.projects;
-    if (source) {
-      setSelectedProjects(new Set(source.map(p => p.id)));
+    if (localMetadata?.projects) {
+      setSelectedProjects(new Set(localMetadata.projects.map(p => p.id)));
     }
   };
 
-  // Start sync transfer
+  // Start sync transfer - uses file sharing after Bluetooth pairing establishes trust
   const handleStartSync = async () => {
-    if (!syncRef.current || selectedProjects.size === 0) {
+    if (selectedProjects.size === 0) {
       toast({ title: 'Select at least one project', variant: 'destructive' });
       return;
     }
@@ -344,48 +323,70 @@ export function BluetoothSyncDialog({
     try {
       setPhase('transferring');
       
-      if (direction === 'send') {
-        // Gather data for selected projects
-        const projectsToSend: FarmProject[] = [];
-        const recordsToSend: FarmRecord[] = [];
-        
-        for (const projectId of selectedProjects) {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            projectsToSend.push(project);
-            const records = await getRecordsByProject(projectId);
-            recordsToSend.push(...records);
-          }
+      // Gather data for selected projects
+      const projectsToSend: FarmProject[] = [];
+      const recordsToSend: FarmRecord[] = [];
+      
+      for (const projectId of selectedProjects) {
+        const project = projects.find(p => p.id === projectId);
+        if (project) {
+          projectsToSend.push(project);
+          const records = await getRecordsByProject(projectId);
+          recordsToSend.push(...records);
         }
-        
-        const syncData: SyncDataPayload = {
-          projects: projectsToSend,
-          records: recordsToSend,
-        };
-        
-        // Send through data channel
-        syncRef.current.sendData(JSON.stringify({
-          type: 'sync-data',
-          payload: syncData,
-          timestamp: Date.now(),
-        }));
-        
-        setPhase('complete');
-        toast({
-          title: 'Sync complete',
-          description: `Sent ${projectsToSend.length} project(s) to ${deviceName}`
-        });
-      } else {
-        // Request data from remote
-        syncRef.current.sendData(JSON.stringify({
-          type: 'sync-request',
-          payload: {
-            projectIds: Array.from(selectedProjects),
-            direction: 'receive',
-          },
-          timestamp: Date.now(),
-        }));
       }
+      
+      const syncData = {
+        version: '1.0',
+        exportedAt: new Date().toISOString(),
+        projects: projectsToSend,
+        records: recordsToSend,
+      };
+      
+      // Create and share file
+      const jsonString = JSON.stringify(syncData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      
+      // Try Web Share API first (works great on mobile)
+      if (navigator.share && navigator.canShare) {
+        const file = new File([blob], `farmdeck-sync-${Date.now()}.json`, { type: 'application/json' });
+        
+        try {
+          await navigator.share({
+            title: 'FarmDeck Sync',
+            text: `Syncing ${projectsToSend.length} project(s)`,
+            files: [file],
+          });
+          
+          setPhase('complete');
+          setSyncResult({ imported: 0, skipped: 0, conflicts: 0 });
+          toast({
+            title: 'Sync file shared',
+            description: `Shared ${projectsToSend.length} project(s). Open the file on the other device to import.`
+          });
+          return;
+        } catch (shareError) {
+          // Share was cancelled or failed, fall back to download
+          console.log('[BluetoothSyncDialog] Share cancelled, falling back to download');
+        }
+      }
+      
+      // Fallback: Download file
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `farmdeck-sync-${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      setPhase('complete');
+      setSyncResult({ imported: 0, skipped: 0, conflicts: 0 });
+      toast({
+        title: 'Sync file downloaded',
+        description: `Downloaded ${projectsToSend.length} project(s). Share this file with the other device.`
+      });
     } catch (error) {
       console.error('[BluetoothSyncDialog] Sync error:', error);
       setErrorMessage(error instanceof Error ? error.message : 'Sync failed');
@@ -402,7 +403,7 @@ export function BluetoothSyncDialog({
     setErrorMessage('');
     setRemoteMetadata(null);
     setSelectedProjects(new Set());
-    setProgress(null);
+    
     setSyncResult(null);
     setDeviceName('');
   };
@@ -551,48 +552,32 @@ export function BluetoothSyncDialog({
       case 'selecting':
         return (
           <div className="space-y-4">
-            {/* Direction selector */}
-            <div className="flex gap-2 p-1 bg-muted rounded-lg">
-              <Button
-                variant={direction === 'send' ? 'default' : 'ghost'}
-                className="flex-1"
-                onClick={() => setDirection('send')}
-              >
-                <Send className="h-4 w-4 mr-2" />
-                Send
-              </Button>
-              <Button
-                variant={direction === 'receive' ? 'default' : 'ghost'}
-                className="flex-1"
-                onClick={() => setDirection('receive')}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Receive
-              </Button>
+            {/* Info banner */}
+            <div className="p-3 bg-primary/10 rounded-lg text-sm">
+              <p className="font-medium text-primary">Device Paired Successfully</p>
+              <p className="text-muted-foreground text-xs mt-1">
+                Select projects below and tap Send to share via file transfer.
+              </p>
             </div>
 
             {/* Device info */}
             <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
               <Smartphone className="h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
-                <p className="text-sm font-medium">{deviceName}</p>
-                {remoteMetadata && (
-                  <p className="text-xs text-muted-foreground">
-                    {remoteMetadata.projectCount} projects • {remoteMetadata.recordCount} records
-                  </p>
-                )}
+                <p className="text-sm font-medium">{deviceName || 'Paired Device'}</p>
+                <p className="text-xs text-muted-foreground">
+                  {localMetadata?.projectCount || 0} local projects available
+                </p>
               </div>
-              <Badge variant="outline" className="text-success border-success">
-                Connected
+              <Badge variant="outline" className="text-green-600 border-green-600">
+                Paired
               </Badge>
             </div>
 
             {/* Project selection */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-medium">
-                  {direction === 'send' ? 'Your Projects' : 'Remote Projects'}
-                </h3>
+                <h3 className="text-sm font-medium">Select Projects to Share</h3>
                 <Button variant="ghost" size="sm" onClick={selectAllProjects}>
                   Select All
                 </Button>
@@ -600,7 +585,7 @@ export function BluetoothSyncDialog({
               
               <ScrollArea className="h-[200px] border rounded-lg">
                 <div className="p-2 space-y-1">
-                  {(direction === 'send' ? localMetadata?.projects : remoteMetadata?.projects)?.map(project => (
+                  {localMetadata?.projects?.map(project => (
                     <div
                       key={project.id}
                       className={`flex items-center gap-3 p-2 rounded cursor-pointer hover:bg-muted ${
@@ -620,28 +605,24 @@ export function BluetoothSyncDialog({
                       )}
                     </div>
                   ))}
+                  {(!localMetadata?.projects || localMetadata.projects.length === 0) && (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      No projects to share
+                    </div>
+                  )}
                 </div>
               </ScrollArea>
             </div>
 
-            {/* Sync button */}
+            {/* Send button */}
             <Button
               className="w-full"
               size="lg"
               onClick={handleStartSync}
               disabled={selectedProjects.size === 0}
             >
-              {direction === 'send' ? (
-                <>
-                  <Send className="h-4 w-4 mr-2" />
-                  Send {selectedProjects.size} Project{selectedProjects.size !== 1 ? 's' : ''}
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4 mr-2" />
-                  Receive {selectedProjects.size} Project{selectedProjects.size !== 1 ? 's' : ''}
-                </>
-              )}
+              <Send className="h-4 w-4 mr-2" />
+              Share {selectedProjects.size} Project{selectedProjects.size !== 1 ? 's' : ''}
             </Button>
           </div>
         );
@@ -650,15 +631,8 @@ export function BluetoothSyncDialog({
         return (
           <div className="flex flex-col items-center justify-center py-8">
             <Loader2 className="h-12 w-12 text-primary animate-spin mb-4" />
-            <p className="text-lg font-medium mb-2">Syncing...</p>
-            {progress && (
-              <>
-                <Progress value={(progress.sentChunks / progress.totalChunks) * 100} className="w-full mb-2" />
-                <p className="text-sm text-muted-foreground">
-                  {progress.sentChunks} / {progress.totalChunks} chunks
-                </p>
-              </>
-            )}
+            <p className="text-lg font-medium mb-2">Preparing files...</p>
+            <p className="text-sm text-muted-foreground">Please wait</p>
           </div>
         );
 
