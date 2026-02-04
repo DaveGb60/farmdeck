@@ -44,7 +44,7 @@ export function validateSyncData(data: unknown): data is SyncData {
 }
 
 // Generate a content fingerprint for a record (excludes id, createdAt, updatedAt)
-function generateRecordFingerprint(record: FarmRecord): string {
+export function generateRecordFingerprint(record: FarmRecord): string {
   const content = {
     projectId: record.projectId,
     date: record.date,
